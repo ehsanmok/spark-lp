@@ -53,6 +53,9 @@ object LP extends Logging {
   /**
     * Compute the optimal value and the corresponding vector for LP problem.
     *
+    * minimize c^Tx
+    * subject to Ax=b and x >= 0
+    *
     * @param c the objective coefficient DVector.
     * @param rows the constraint DMatrix.
     * @param b the constraint values.
@@ -72,28 +75,62 @@ object LP extends Logging {
     implicit row: VectorSpace[DVector],
     col: VectorSpace[DenseVector]): (Double, DVector) = {
 
+    // cache distributed vector in memory
     row.cache(c)
+
+    // run initialization
     val initLocal = Initialize.init(c, rows, b)
+
+    // set initial x
     var x: DVector = initLocal._1
     row.cache(x)
+
+    // set initial lambda
     var lambda: DenseVector = initLocal._2
+
+    // set initial lambda as broadcast variable
     var lambdaBroadcast = sc.broadcast(lambda)
+
+    // set initial s
     var s: DVector = initLocal._3
     row.cache(s)
+
+    // set number of unknown in lp
     val n = initLocal._4
+
+    // set number of equations in lp
     val m = initLocal._5
+
+    // duality gap parameter
     val mu: Double = x.dot(s) / n
+
     var converged: Boolean = false
+
     var iter: Int = 1
+
+    // initial objective value
     var cTx: Double = Double.PositiveInfinity
+
+    // create LinonMatrix once (this is necessary to reduce the object creation overhead)
     val dmat = new LinopMatrix(rows)
+
+    // create LinonMatrixAdjoin once
     val dmatT = new LinopMatrixAdjoint(rows)
+
+    // step size shrinkage value
     val etaIter = 0.999
+
+    // cap value
     val cap = 1e20
+
+    // cap squared value
     val capSqrd = 1e10
+
+    // eps numerical threshold
     val eps = 1e-20
 
     while (!converged && iter <= maxIter) {
+
       println(s"iteration $iter")
       // B^T * x - b
       var rb: DenseVector = col.combine(1.0, dmatT(x), -1.0,  b)
@@ -125,6 +162,7 @@ object LP extends Logging {
       // 1) solve for BTD2B dLambdaAff = -rb + BT * (-D^2 * rc + x)
       val DB: DMatrix = (new SpLinopMatrix(D))(rows)
       val DBRowMat: LPRowMatrix = new LPRowMatrix(DB, n, m)
+      // compute Gramian matrix B^TB
       val BTD2B: BDV[Double] = DBRowMat.computeGramianMatrixColumn(m, depth=2)
       val BTD2rcx = dmatT(x.diff(row.entrywiseProd(D2, rc)))
       val dLambdaAffRightSide: Vector = col.combine(1.0, BTD2rcx, -1.0, rb)
@@ -209,7 +247,6 @@ object LP extends Logging {
       s = row.combine(1.0, s, alphaDualIter, ds)
       //s.checkpoint()
       s.localCheckpoint()
-      // page 226: LP Wright --> differ in condition 3 (Check with Mehrotra's original paper and others)
       rb = col.combine(1.0, dmatT(x), -1.0,  b)
       rc = row.combine(1.0, dmat(lambdaBroadcast.value), 1.0, s.diff(c))
       cTx = c.dot(x)

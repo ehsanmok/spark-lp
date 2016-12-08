@@ -56,7 +56,6 @@ object Initialize extends Logging {
 
     row.cache(c)
     rows.cache()
-    //rows.persist(StorageLevel.MEMORY_ONLY_SER)
     val dmat = new LinopMatrix(rows)
     val dmatT = new LinopMatrixAdjoint(rows)
     val n: Long = rows.count()
@@ -64,34 +63,42 @@ object Initialize extends Logging {
     val m: Int = rows.first().size
     println(s"number of equations: $m")
     val B: LPRowMatrix = new LPRowMatrix(rows, n, m)
-    //val m: Int = B.numCols().toInt
     val BTB: BDV[Double] = B.computeGramianMatrixColumn(m, depth=2)
-    //val BTBBrzInv: BDM[Double] = inv(BTB.toBreeze.asInstanceOf[BDM[Double]])
-    //val BTBInv: Matrix = new DenseMatrix(BTBBrzInv.rows, BTBBrzInv.cols, BTBBrzInv.data)
     val BTBtoArrayToInv = BTB.toArray
-    Util.posSymDefInv(BTBtoArrayToInv, m) // to use less space with side effect
+    Util.posSymDefInv(BTBtoArrayToInv, m) // less space with managed side effect
     val BTBInv: Matrix = Util.triuToFull(BTBtoArrayToInv, m)
+
     // xTilda = B * BTBInv * b
-    // NOTE: BTBInv and BTBInv * b are local matrix and vector no need to be worried about partitioning
+    // NOTE: BTBInv and BTBInv * b are local matrix and vector
     val xTilda: DVector = dmat(BTBInv.multiply(b)) // DMatrix * DenseVector
+
     // lambdaTilda = BTBInv * B^T * c
     val lambdaTilda: DenseVector = BTBInv.multiply(dmatT(c))
+
     // sTilda = c - B * lambdaTilda
     val sTilda: DVector = c.diff(dmat(lambdaTilda))
+
     // deltax = max(1.5 * xTilda.max(), 0)
     val deltax: Double = math.max(1.5 * row.max(xTilda), 0)
+
     // deltas = max(1.5 * sTilda.max(), 0)
     val deltas: Double = math.max(1.5 * row.max(sTilda), 0)
+
     // xHat = xTilda + deltax * e
     val xHat: DVector = xTilda.mapElements(a => a + deltax)
+
     // sHat = sTilda + deltas * e
     val sHat: DVector = sTilda.mapElements(a => a + deltas)
+
     // deltaxHat = 0.5 * (xHat, sHat) / (e, sHat)
-    val deltaxHat: Double = 0.5 * (xHat.dot(sHat) / row.sum(sHat)) // dot in DVectorFunction implicit
+    val deltaxHat: Double = 0.5 * (xHat.dot(sHat) / row.sum(sHat))
+
     // deltasHat = 0.5 * (xHat, sHat) / (e, xHat)
     val deltasHat: Double = 0.5 * (xHat.dot(sHat) / row.sum(xHat))
+
     // x = xHat + deltaxHat * e
     val x = xHat.mapElements(a => a + deltaxHat)
+
     // lambda = lambdaTilda
     // s = sHat + deltasHat * e
     val s = sHat.mapElements(a => a + deltasHat)

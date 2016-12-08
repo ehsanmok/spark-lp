@@ -1,15 +1,14 @@
 # spark-lp (WIP)
 
-This package offers an implementation of [Mehrohra's predictor-corrector interior point methods](https://en.wikipedia.org/wiki/Mehrotra_predictor%E2%80%93corrector_method) described in [http://www.springer.com/gp/book/9780387303031](numerical optimization) by *J. Nocedal* and *S. Wright*, to solve large-scale [linear programming](https://en.wikipedia.org/wiki/Linear_programming) problems using Apache Spark.
+This package offers an implementation of [Mehrohra's predictor-corrector interior point algorithm](https://en.wikipedia.org/wiki/Mehrotra_predictor%E2%80%93corrector_method), described in [numerical optimization]([http://www.springer.com/gp/book/9780387303031]), on top of Apache Spark to solve large-scale [linear programming](https://en.wikipedia.org/wiki/Linear_programming) problems.
 
 Linear programming has the following standard form: 
 
 	minimize c^T x 
 	subject to Ax=b and x >= 0
 
-where `c, b` are given vectors ((.)^T is the traspose operation), `A` is a given `m` by `n` matrix and `x` is the objective vector. We are assuming `A` has more columns than rows. To exploit Spark's 
-distributed matrix data structures, we work with `B = A^T` which is a tall-skinny 
-[RowMatrix](http://github.com/apache/spark/blob/master/mllib/src/main/scala/org/apache/spark/mllib/linalg/distributed/RowMatrix.scala). In fact, we are assuming rows in `B` are local vectors that can be stored in each local node.
+where `c, b` are given vectors ((.)^T is the traspose operation), `A` is a given `m` by `n` matrix and `x` is the objective vector. We assume that `A` the number of rows (equations) is
+at most equal to the number of columns (unknowns) (`m <= n`) and `A` has full row rank, thus `AA^T` is invertible.
 
 ## Example
 
@@ -62,11 +61,10 @@ Our implementation was inspired by [spark-tfocs](https://github.com/databricks/s
 
 * spark-lp is able to solve large-scale LP problems in a distributed way with fault-tolerance over commodity clusters of machines. (Stay tuned for more results!)
 
-* spark-lp can solve LP problems faster and more accurate than spark-tfocs.
+* spark-lp is ~100X faster and more accurate than spark-tfocs for solving large-scale LP problems. (Stay tuned for the published results)
 
 ## TODOs:
 
-* Add benchmark results.
 * Add preprocessing to capture more general LP formats.
 * Add infeasibility detection.
 * Extend to QP solver.

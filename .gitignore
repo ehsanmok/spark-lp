@@ -5,3 +5,5 @@ project/project/
 .idea/
 .idea_modules/
 .sbtopts
+src/main/main.iml
+src/test/test.iml
