@@ -1,18 +1,18 @@
-# spark-lp (WIP)
+# spark-lp
 
-This package offers an implementation of [Mehrohra's predictor-corrector interior point algorithm](https://en.wikipedia.org/wiki/Mehrotra_predictor%E2%80%93corrector_method), described in [numerical optimization]([http://www.springer.com/gp/book/9780387303031]), on top of Apache Spark to solve large-scale [linear programming](https://en.wikipedia.org/wiki/Linear_programming) problems.
+This package offers an implementation of [Mehrohra's predictor-corrector interior point algorithm](https://en.wikipedia.org/wiki/Mehrotra_predictor%E2%80%93corrector_method), described in my thesis [Distributed linear programming with Apache Spark](https://open.library.ubc.ca/cIRcle/collections/ubctheses/24/items/1.0340337], to solve **large-scale** [linear programming](https://en.wikipedia.org/wiki/Linear_programming) problems at the lowest cost using Apache Spark.
 
 Linear programming has the following standard form: 
 
 	minimize c^T x 
 	subject to Ax=b and x >= 0
 
-where `c, b` are given vectors ((.)^T is the traspose operation), `A` is a given `m` by `n` matrix and `x` is the objective vector. We assume that `A` the number of rows (equations) is
+where `c, b` are given vectors ((.)^T is the traspose operation), `A` is a given `m` by `n` matrix and `x` is the objective vector. We assume that in `A` the number of rows (equations) is
 at most equal to the number of columns (unknowns) (`m <= n`) and `A` has full row rank, thus `AA^T` is invertible.
 
 ## Example
 
-The following is an example of using spark-lp to solve a linear programming problem
+The following is an example of using spark-lp *locally* to solve a linear programming problem in parallel with 2 cores and 2 partitions:
 
 	import org.apache.spark.{SparkConf, SparkContext}
 	import org.apache.spark.mllib.linalg.{DenseVector, Vector, Vectors}
@@ -23,7 +23,7 @@ The following is an example of using spark-lp to solve a linear programming prob
 
 	val sparkConf = new SparkConf().setMaster("local[2]").setAppName("TestLPSolver")
 	val sc = new SparkContext(sparkConf)
-
+	val numPartitions = 2
 	val cArray = Array(2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0)
 	val BArray = Array(
     	Array(12.0, 16.0, 30.0, 1.0, 0.0),
@@ -46,25 +46,17 @@ The following is an example of using spark-lp to solve a linear programming prob
 
 ## Software Architecture Overview
 
-Our implementation was inspired by [spark-tfocs](https://github.com/databricks/spark-tfocs). The spark-tfocs architecture design is the best suitable option for separating local and distributed vector space operations by means of
-
-* `DenseVector` A wrapper around `Array[Double]` with vector operations support. (Imported
-  from `org.apache.spark.mllib.linalg`)
-
-* `DVector` A distributed vector, stored as an `RDD[DenseVector]`, where each partition comprises a single `DenseVector` containing a slice of the complete distributed vector. This has the advantage of using BLAS operations directly as opposed to `RDD[Double]`. More information is available in `org.apache.spark.mllib.optimization.lp.VectorSpace`.
-
-* `DMatrix` A distributed matrix, stored as an `RDD[Vector]`, where each (possibly sparse) `Vector`
-  represents a row of the matrix. More information is available in
-  `org.apache.spark.mllib.optimization.lp.VectorSpace`.
+Detailed descriptions of our design is described in chapter 4 of the [thesis](https://open.library.ubc.ca/cIRcle/collections/ubctheses/24/items/1.0340337).
 
 ## Advantages
 
-* spark-lp is able to solve large-scale LP problems in a distributed way with fault-tolerance over commodity clusters of machines. (Stay tuned for more results!)
+* spark-lp is unique because it is **open-source** and it can solve large-scale LP problems in a distributed way with **fault-tolerance** over **commodity clusters** of machines. Thus, it provides the *lowest cost* opportunity for such applications. See page 42 for cluster results [here](https://open.library.ubc.ca/cIRcle/collections/ubctheses/24/items/1.0340337).
 
-* spark-lp is ~100X faster and more accurate than spark-tfocs for solving large-scale LP problems. (Stay tuned for the published results)
+* spark-lp is at least ~10X *faster* and more accurate than spark-tfocs for solving large-scale LP problems. See page 38 for local results [here](https://open.library.ubc.ca/cIRcle/collections/ubctheses/24/items/1.0340337). Our benchmark shows that spark-tfocs is *not* suitable even for small LP problems.
 
-## TODOs:
+## Future plans:
 
 * Add preprocessing to capture more general LP formats.
 * Add infeasibility detection.
 * Extend to QP solver.
+* Add GPU support, as described in page 47 [here](https://open.library.ubc.ca/cIRcle/collections/ubctheses/24/items/1.0340337), using INDArray provided in [ND4J](http://nd4j.org/) library.
