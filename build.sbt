@@ -4,7 +4,7 @@ version := "1.0-SNAPSHOT"
 
 scalaVersion := "2.10.4"
 
-sparkVersion := "2.0.0"
+sparkVersion := "1.6.2"
 
 sparkComponents += "mllib"
 
