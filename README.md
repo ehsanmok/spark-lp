@@ -1,5 +1,7 @@
 # spark-lp
 
+![Project unmaintained](https://img.shields.io/badge/project-unmaintained-red.svg)
+
 This package offers an implementation of [Mehrohra's predictor-corrector interior point algorithm](https://en.wikipedia.org/wiki/Mehrotra_predictor%E2%80%93corrector_method), described in my thesis [Distributed linear programming with Apache Spark](https://open.library.ubc.ca/cIRcle/collections/ubctheses/24/items/1.0340337), to solve **large-scale** [linear programming](https://en.wikipedia.org/wiki/Linear_programming) problems at the *lowest cost* using Apache Spark.
 
 Linear programming has the following standard form: 
