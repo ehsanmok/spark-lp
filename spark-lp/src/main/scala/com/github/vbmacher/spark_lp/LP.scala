@@ -228,6 +228,7 @@ object LP extends LazyLogging {
       def gradient(x: DVector): DVector = quadratic.map(q => c.combine(1.0, 1.0, q.entrywiseProd(x))).getOrElse(c)
       // Reuse the wrapper so adjoint products discover the matrix dimensions only once.
       val matrix = new DMatrixOps(AT)
+      lazy val certificateScales = certificateScaling(c, AT, b, caches)
 
       val resolvedSolver = resolveNewtonSolver(solver, b.size)
       val systemFactory: NewtonSystemFactory = resolvedSolver match {
@@ -297,10 +298,8 @@ object LP extends LazyLogging {
       val normB = math.sqrt(b.dot(b))
       val normC = math.sqrt(c.dot(c))
 
-      // The defect of an iterative normal-equations solve enters the next primal residual
-      // one-to-one, so solves need only be as accurate (in absolute terms) as the primal
-      // convergence condition `||rb|| < tolerance * (1 + ||b||)` demands.
-      val newtonAbsTolerance = 0.1 * tolerance * (1.0 + normB)
+      // A large unrelated RHS must not relax the accuracy of a small constraint row.
+      val newtonAbsTolerance = 0.1 * tolerance * (1.0 + b.values.map(math.abs).min)
 
       var dLambdaAffBroadcast: Broadcast[DenseVector] = null
       var dLambdaBroadcast: Broadcast[DenseVector] = null
@@ -329,9 +328,13 @@ object LP extends LazyLogging {
 
             // Proximal references are the current x/lambda. The original residuals are
             // unchanged; only the Newton equations contain Rp and Rd.
-            val rho = systemFactory.primalRegularization
             val effectiveSlack = quadratic.map(q => s.combine(1.0, 1.0, q.entrywiseProd(x))).getOrElse(s)
-            val weights = if (rho > 0.0 || quadratic.nonEmpty) regularizedWeights(x, effectiveSlack, rho)
+            // QP free-variable splits need the configured proximal stabilization in their nullspace.
+            val rho = if (quadratic.isEmpty && systemFactory.primalRegularization > 0.0)
+              systemFactory.primalRegularization * math.min(1.0,
+                effectiveSlack.zipElements(x, (si, xi) => si / xi).minValue)
+            else systemFactory.primalRegularization
+            val weights = if (resolvedSolver == NewtonSolver.ConjugateGradient || quadratic.nonEmpty) regularizedWeights(x, effectiveSlack, rho)
               else normalEquationWeights(x, s, eps, valueCap)
             val D2 = temporary.cache(weights.squared)
             newtonSystem = systemFactory.build(AT, equations, Some(weights))
@@ -418,44 +421,20 @@ object LP extends LazyLogging {
             dualResidual = covg2
             dualityGap = covg3
 
-            converged = (covg1 < tolerance) && (covg2 < tolerance) && (covg3 < tolerance)
+            val rowResidual = rb.values.zip(b.values).map { case (r, rhs) =>
+              math.abs(r) / (1.0 + math.abs(rhs))
+            }.max
+            converged = (covg1 < tolerance) && (rowResidual < tolerance) &&
+              (covg2 < tolerance) && (covg3 < tolerance)
 
-            if (!converged && quadratic.nonEmpty) {
-              certificatesOnIterate(c, AT, b, x, lambda, infeasibilityTolerance, quadratic).foreach { cert =>
+            if (!converged) {
+              certificatesOnIterate(c, AT, b, x, lambda, infeasibilityTolerance, quadratic, certificateScales).foreach { cert =>
                 earlyTermination = Some(cert.termination)
                 primalCertificate = cert.primalCertificate
                 dualCertificate = cert.dualCertificate
                 certificateResidual = cert.residual
               }
             }
-            if (!converged && quadratic.isEmpty) {
-              // Check the normalized ray against A directly: reconstructing A^T lambda from
-              // rc + c - s can cancel tiny nonzero components and invent a certificate.
-              // A x = rb + b is driver-local for the dual test.
-              if (bTlambda > 0) {
-                val ray = new DenseVector(lambda.values.map(_ / bTlambda))
-                val quality = math.max(0.0, AT.product(ray).maxValue)
-                if (quality <= infeasibilityTolerance) {
-                  earlyTermination = Some(Termination.PrimalInfeasible)
-                  primalCertificate = Some(ray)
-                  certificateResidual = quality
-                  logger.info(s"Primal infeasibility certificate found (residual $quality)")
-                }
-              }
-              if (earlyTermination.isEmpty && cTx < 0) {
-                val axInf = rb.combine(1.0, 1.0, b).values.map(math.abs).max
-                val quality = axInf / math.abs(cTx)
-                if (quality <= infeasibilityTolerance) {
-                  earlyTermination = Some(Termination.DualInfeasible)
-                  val cTxAbs = math.abs(cTx)
-                  dualCertificate = Some(x.mapElements(_ / cTxAbs))
-                  certificateResidual = quality
-                  logger.info(s"Dual infeasibility certificate found (residual $quality)")
-                }
-              }
-
-            }
-
             logger.debug(s"LP iteration=$iter sigma=$sigma primalResidual=$covg1 " +
               s"dualResidual=$covg2 gap=$covg3 converged=$converged cTx=$cTx bTlambda=$bTlambda")
 
@@ -495,7 +474,7 @@ object LP extends LazyLogging {
               // Farkas certificate (at the same public infeasibilityTolerance) that explains the
               // degeneration. Without a certificate, report a numerical failure.
               val certificate =
-                try certificatesOnIterate(c, AT, b, x0, lambda0, infeasibilityTolerance, quadratic)
+                try certificatesOnIterate(c, AT, b, x0, lambda0, infeasibilityTolerance, quadratic, certificateScales)
                 catch {
                   case NonFatal(_) => None
                 }
@@ -598,6 +577,52 @@ object LP extends LazyLogging {
     residual: Double,
     cTx: Double)
 
+  private case class CertificateScaling(
+    rows: Array[Double], columns: DVector, primalColumnNorms: DVector,
+    dualRowNorms: Array[Double], rhsNorm: Double, costNorm: Double)
+
+  /** Equilibrate certificate coordinates without changing the model or the solver iterates. */
+  private def certificateScaling(c: DVector, AT: DMatrix, b: DenseVector,
+    caches: CachedRDDs): CertificateScaling = {
+    def add(left: Array[Double], right: Array[Double]): Array[Double] = {
+      var j = 0
+      while (j < left.length) { left(j) += right(j); j += 1 }
+      left
+    }
+    val rows = AT.treeAggregate(new Array[Double](b.size))(
+      (norms, row) => { row.foreachActive((j, a) => norms(j) += math.abs(a)); norms }, add)
+    rows.indices.foreach { j =>
+      rows(j) = math.max(rows(j), math.abs(b(j)))
+      if (rows(j) == 0.0) rows(j) = 1.0
+    }
+    val primalColumns = caches.cache(AT.mapPartitions(partition => Iterator.single(new DenseVector(
+      partition.map { row =>
+        var norm = 0.0
+        row.foreachActive((j, a) => norm += math.abs(a) / rows(j))
+        norm
+      }.toArray))))
+    val columnNorms = AT.mapPartitions(partition => Iterator.single(new DenseVector(
+      partition.map { row => var norm = 0.0; row.foreachActive((_, a) => norm += math.abs(a)); norm }.toArray)))
+    val columns = caches.cache(c.zipElements(columnNorms, (cost, norm) => {
+      val scale = math.max(math.abs(cost), norm)
+      if (scale == 0.0) 1.0 else scale
+    }))
+    val dualRows = AT.zipPartitions(columns) { (partition, scales) =>
+      val values = scales.next().values
+      val norms = new Array[Double](b.size)
+      var i = 0
+      partition.foreach { row =>
+        val scale = values(i)
+        row.foreachActive((j, a) => norms(j) += math.abs(a) / scale)
+        i += 1
+      }
+      Iterator.single(norms)
+    }.treeAggregate(new Array[Double](b.size))(add, add)
+    CertificateScaling(rows, columns, primalColumns, dualRows,
+      b.values.indices.map(j => math.abs(b(j)) / rows(j)).sum,
+      c.zipElements(columns, (cost, scale) => math.abs(cost) / scale).sum())
+  }
+
   /**
     * Runs the two Farkas certificate tests on a completed iterate `(x, lambda)`, at the same
     * `infeasibilityTolerance` used inside the iteration loop.
@@ -608,17 +633,23 @@ object LP extends LazyLogging {
     b: DenseVector,
     x: DVector,
     lambda: DenseVector,
-    infeasibilityTolerance: Double, quadratic: Option[DVector]): Option[Certificate] = {
+    infeasibilityTolerance: Double, quadratic: Option[DVector], scales: CertificateScaling): Option[Certificate] = {
     val cTx = c.dot(x)
     val bTlambda = b.dot(lambda)
 
-    val primal = if (bTlambda > 0) {
-      val maxATlambda = AT.product(lambda).maxValue
-      val quality = math.max(0.0, maxATlambda) / bTlambda
-      if (quality <= infeasibilityTolerance) {
+    val lambdaNorm = lambda.values.indices.map(j => math.abs(lambda(j)) * scales.rows(j)).max
+    val primalMargin = Numerics.relativeResidual(bTlambda,
+      scales.rhsNorm * lambdaNorm)
+    val primal = if (bTlambda > 0 && Numerics.isFinite(primalMargin) && primalMargin > infeasibilityTolerance) {
+      val ray = new DenseVector(lambda.values.map(_ / bTlambda))
+      val activity = AT.product(ray)
+      val quality = math.max(0.0, activity.maxValue)
+      val relative = activity.zipElements(scales.primalColumnNorms, (a, norm) =>
+        Numerics.relativeResidual(math.max(0.0, a), norm * (lambdaNorm / bTlambda))).maxValue
+      if (quality <= infeasibilityTolerance && relative <= infeasibilityTolerance) {
         Some(Certificate(
           Termination.PrimalInfeasible,
-          primalCertificate = Some(new DenseVector(lambda.values.map(_ / bTlambda))),
+          primalCertificate = Some(ray),
           dualCertificate = None,
           residual = quality,
           cTx = cTx))
@@ -627,15 +658,25 @@ object LP extends LazyLogging {
 
     primal.orElse {
       if (cTx < 0) {
-        val axInf = AT.adjointProduct(x).values.map(math.abs).max
+        val scaledXNorm = x.entrywiseProd(scales.columns).mapElements(math.abs).maxValue
+        val margin = Numerics.relativeResidual(-cTx, scales.costNorm * scaledXNorm)
+        if (!Numerics.isFinite(margin) || margin <= infeasibilityTolerance) return None
+        val cTxAbs = math.abs(cTx)
+        val ray = x.mapElements(_ / cTxAbs)
+        val ax = AT.adjointProduct(ray).values
+        val relative = ax.zip(scales.dualRowNorms).map { case (a, norm) =>
+          Numerics.relativeResidual(math.abs(a), norm * (scaledXNorm / cTxAbs))
+        }.max
         val qInf = quadratic.map(q => q.entrywiseProd(x).maxValue).getOrElse(0.0)
-        val quality = math.max(axInf, qInf) / math.abs(cTx)
-        if (quality <= infeasibilityTolerance) {
-          val cTxAbs = math.abs(cTx)
+        val curvature = quadratic.map(q => q.zipElements(x, (qi, xi) =>
+          if (qi == 0.0) 0.0 else math.abs(xi)).entrywiseProd(scales.columns)
+          .mapElements(_ / scaledXNorm).maxValue).getOrElse(0.0)
+        val quality = math.max(ax.map(math.abs).max, qInf / cTxAbs)
+        if (quality <= infeasibilityTolerance && relative <= infeasibilityTolerance && curvature <= infeasibilityTolerance) {
           Some(Certificate(
             Termination.DualInfeasible,
             primalCertificate = None,
-            dualCertificate = Some(x.mapElements(_ / cTxAbs)),
+            dualCertificate = Some(ray),
             residual = quality,
             cTx = cTx))
         } else None

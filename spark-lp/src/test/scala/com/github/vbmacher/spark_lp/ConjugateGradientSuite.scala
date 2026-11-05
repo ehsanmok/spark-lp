@@ -60,4 +60,18 @@ class ConjugateGradientSuite extends AnyFunSuite {
     cg.solve(_ => fail("Initial residual already meets tolerance"), 10)
     assert(cg.converged && cg.iterations == 0)
   }
+
+  test("component tolerances keep a large RHS from hiding an unsolved small row") {
+    val tolerances = Array(100.0, 1e-8)
+    val cg = new ConjugateGradient(Array(1e12, 100.0), _.clone(), 1e-10,
+      initialGuess = Some(Array(1e12, 0.0)), componentTolerances = Some(tolerances))
+    tolerances(1) = 100.0
+    assert(!cg.converged)
+
+    cg.solve(_.clone(), 2)
+
+    assert(cg.converged)
+    assert(cg.solution.sameElements(Array(1e12, 100.0)))
+    assert(cg.iterations == 1)
+  }
 }

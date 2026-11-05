@@ -6,8 +6,10 @@ package com.github.vbmacher.spark_lp.newton
   * Regularization stabilizes the inner linear equations; convergence is still tested against the
   * unregularized optimization model.
   *
-  * @param primalRegularization positive diagonal value added on the primal side
-  * @param dualRegularization positive diagonal value added on the equality-multiplier side
+  * @param primalRegularization positive diagonal value added on the primal side; LP iterations cap
+  *                             it relative to the smallest slack-to-primal ratio, QP retains this value
+  * @param dualRegularization maximum positive diagonal value added on the equality-multiplier side;
+  *                           capped relative to each nonzero normal-equations diagonal
   * @param preconditionerRank requested partial-Cholesky rank; zero selects adaptive rank
   * @param preconditionerMemoryBytes maximum driver bytes for preconditioner factors; zero selects
   *                                  diagonal-only preconditioning

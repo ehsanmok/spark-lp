@@ -109,12 +109,20 @@ dual   = ||A^T*lambda + s - c||_2 / (1 + ||c||_2)
 gap    = |c^T*x - b^T*lambda| / (1 + |b^T*lambda|)
 ....
 
+Every primal row must also satisfy `abs((A*x-b)_i)/(1+abs(b_i)) < tolerance`, so an
+unrelated large right-hand side cannot hide an inaccurate constraint.
+
 `SolveConfig.infeasibilityTolerance` controls two certificate tests. A primal-infeasibility
 certificate is a normalized multiplier `y` satisfying
 `A^T*y <= infeasibilityTolerance` and `b^T*y = 1`. An unbounded direction is a nonnegative `z`
 satisfying `||A*z||_inf <= infeasibilityTolerance` and improving the objective. The solver reports
 unboundedness only when it also has a primal-feasible point. Certificate tests use the last completed
-iterate and account for floating-point tolerance.
+iterate and account for floating-point tolerance. Acceptance also checks homogeneous residuals and
+a significant separation margin in equilibrated certificate coordinates. Primal multipliers are
+scaled by their row coefficients and RHS; primal directions are scaled by their column coefficients
+and cost. The invariant scales are prepared once per solve. These checks prevent large objective or
+RHS units from turning a nonzero equation into a certificate, while preserving unrelated zero
+certificate entries. Certificates remain numerical witnesses, not exact-arithmetic proofs.
 
 == Choosing the Newton-system solver
 
@@ -170,8 +178,8 @@ internal model. The matrix-free regularization and preconditioning follow Gondzi
 |API setting |Default |Effect
 |`SolveConfig.cgTolerance` |`1e-10` |Relative residual target for each inner CG solve.
 |`SolveConfig.cgMaxIterations` |`0` |Use the automatic iteration limit; a positive value sets an explicit limit.
-|`CgConfig.primalRegularization` |`1e-8` |`Rp`; must be finite and positive.
-|`CgConfig.dualRegularization` |`1e-8` |`Rd`; must be finite and positive.
+|`CgConfig.primalRegularization` |`1e-8` |`Rp`; LP iterations cap it relative to the smallest slack-to-primal ratio. QP retains the configured value to stabilize uncurved directions. Must be finite and positive.
+|`CgConfig.dualRegularization` |`1e-8` |Maximum `Rd`; capped relative to each nonzero normal-equations diagonal. Must be finite and positive.
 |`CgConfig.preconditionerRank` |`0` |Choose rank adaptively. A positive value requests that rank, subject to safety caps.
 |`CgConfig.preconditionerMemoryBytes` |256 MiB |Limit driver memory for partial-Cholesky factors. Zero forces diagonal preconditioning.
 |===
@@ -189,13 +197,17 @@ doubles the rank after further failures. Each selected column requires one distr
 outer iterations keep the selected rank but rebuild factors for the new weights.
 
 The memory budget and the driver-work limit `m*rank^2 <= 2e10` can reduce an explicitly requested
-rank. A pivot at or below `max(Rd, 64*ulp(max(diag(G))))` stops factorization. This changes only the
+rank. A pivot at or below `max(min(Rd), 64*ulp(max(diag(G))))` stops factorization. This changes only the
 preconditioner; it does not modify the model or add a hidden regularization retry.
 
-The requested inner residual is
-`max(cgTolerance*norm(rhs), 0.1*tolerance*(1+norm(b)))`; initialization uses only the relative term.
+Each inner residual component must satisfy
+`abs(residual_i) <= max(cgTolerance*max(abs(rhs_i), smallestNonzeroAbsRhs),
+0.1*tolerance*(1+min(abs(b))))`; initialization uses only the relative term.
+This prevents a large equation from hiding an inaccurate small equation. Outer convergence also
+checks each constraint relative to its own RHS.
 After exhausting recovery steps, the solver accepts an inexact direction only when its finite true
-residual is no greater than `max(target, 1e-3*norm(rhs))`. Otherwise it reports a numerical failure
+residual is no greater than `max(cgTolerance*norm(rhs), absoluteTarget, 1e-3*norm(rhs))`.
+Otherwise it reports a numerical failure
 unless the last completed iterate supplies a valid certificate. `CgConfig` affects only
 `ConjugateGradient`; `Cholesky` ignores it.
 

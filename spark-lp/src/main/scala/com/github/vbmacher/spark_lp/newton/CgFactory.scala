@@ -17,7 +17,7 @@ import org.apache.spark.wrappers.ConjugateGradient
   * acceptance; exhausted solves may return at most a 1e-3 relative defect. The outer loop alone
   * judges original-LP convergence and certificates.
   *
-  * @param relTolerance  relative CG stopping tolerance on the residual norm; must be finite and positive.
+  * @param relTolerance  relative CG stopping tolerance for each residual component; must be finite and positive.
   * @param maxIterations CG step budget per preconditioner rank; `<= 0` selects an `m`-derived default.
   * @param config        regularization and preconditioner rank/memory controls.
   * @param monitor       reports solver phases and progress and supplies cooperative cancellation.
@@ -60,7 +60,9 @@ private[spark_lp] final class CgFactory(
     if (currentRank < 0) currentRank = if (requestedRank > 0) maxRank else 0
     currentRank = math.min(currentRank, maxRank)
     monitor.phase(SolvePhase.SystemSetup)
-    private val diagonal = matrix.gramianDiagonal(w).values.map(_ * operatorScale + dualRegularization)
+    private val gramianDiagonal = matrix.gramianDiagonal(w).values.map(_ * operatorScale)
+    private val dual = gramianDiagonal.map(d => dualRegularization * (if (d > 0.0) math.min(1.0, d) else 1.0))
+    private val diagonal = gramianDiagonal.indices.map(i => gramianDiagonal(i) + dual(i)).toArray
     // Keep pivots and the unfloored Schur diagonal for this weighted system. Escalation
     // fetches only new columns; the factors must be rebuilt when the weights change.
     private val partial = new PartialCholesky(diagonal, 0, j => {
@@ -70,9 +72,9 @@ private[spark_lp] final class CgFactory(
         var i = 0
         while (i < column.length) { column(i) *= operatorScale; i += 1 }
       }
-      column(j) += dualRegularization
+      column(j) += dual(j)
       column
-    }, dualRegularization, completed => monitor.report(SolvePhase.SystemSetup,
+    }, dual.min, completed => monitor.report(SolvePhase.SystemSetup,
       work = Some(WorkProgress(completed, preconditionerRank = Some(completed)))))
     private def extendPreconditioner(rank: Int): Unit = {
       partial.extendTo(rank)
@@ -92,17 +94,25 @@ private[spark_lp] final class CgFactory(
       if (pBroadcast != null) pBroadcast.destroy()
       // CG updates its vectors in place; the broadcast must own an immutable snapshot.
       pBroadcast = spark.sparkContext.broadcast(new DenseVector(p.clone()))
-      regularizedProduct(matrix, w, pBroadcast, dualRegularization, operatorScale).values
+      val result = matrix.gramianProduct(pBroadcast, w).values
+      var i = 0
+      while (i < result.length) {
+        result(i) = operatorScale * result(i) + dual(i) * p(i)
+        i += 1
+      }
+      result
     }
 
     override def solve(rhs: DenseVector, absTolerance: Double): DenseVector = {
       monitor.phase(SolvePhase.InnerSolve)
       require(rhs.size == m, "CG right-hand side must match the operator")
+      val smallest = rhs.values.map(math.abs).filter(_ > 0.0).reduceOption((a, b) => math.min(a, b)).getOrElse(1.0)
+      val targets = rhs.values.map(v => math.max(absTolerance, relTolerance * math.max(smallest, math.abs(v))))
       val warmStarted = new ConjugateGradient(rhs.values, applyOperator, relTolerance, absTolerance,
-        Option(lastSolution))
+        Option(lastSolution), Some(targets))
       // Reuse a previous solution only when it improves on the new right-hand side's zero start.
       val cg = if (lastSolution != null && warmStarted.residualNorm >= warmStarted.rhsNorm)
-        new ConjugateGradient(rhs.values, applyOperator, relTolerance, absTolerance)
+        new ConjugateGradient(rhs.values, applyOperator, relTolerance, absTolerance, componentTolerances = Some(targets))
       else warmStarted
       if (cg.rhsNorm == 0.0) return new DenseVector(cg.solution)
 
