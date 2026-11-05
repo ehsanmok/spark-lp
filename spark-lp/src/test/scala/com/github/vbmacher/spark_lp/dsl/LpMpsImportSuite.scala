@@ -136,6 +136,84 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
     }
   }
 
+  test("negative upper-only bounds infer a free lower side for continuous and integer variables") {
+    implicit val ss: SparkSession = spark
+    fixture("""NAME NEGATIVE_UPPER
+      |ROWS
+      | N OBJ
+      |COLUMNS
+      | continuous OBJ 1
+      | integer OBJ 1
+      | zero OBJ 1
+      | zeroInteger OBJ 1
+      | MARK0 'MARKER' 'INTORG'
+      | marker OBJ 1
+      | MARK1 'MARKER' 'INTEND'
+      |BOUNDS
+      | UP bounds continuous -1
+      | UI bounds integer -2
+      | UP bounds marker -3
+      | UP bounds zero 0
+      | UI bounds zeroInteger 0
+      |ENDATA
+      |""") { path =>
+      val declarations = LpMpsImport.read(path).model.inspect.variableDeclarations.map(v => v.name -> v).toMap
+
+      Seq("continuous" -> -1.0, "integer" -> -2.0, "marker" -> -3.0).foreach { case (name, upper) =>
+        assert(declarations(name).lower == Double.NegativeInfinity)
+        assert(declarations(name).upper.contains(upper))
+      }
+      assert(declarations("continuous").category == Continuous)
+      assert(declarations("integer").category == Integer && declarations("marker").category == Integer)
+      Seq("zero", "zeroInteger").foreach { name =>
+        assert(declarations(name).lower == 0.0 && declarations(name).upper.contains(0.0))
+      }
+    }
+  }
+
+  test("explicit lower bounds override negative-upper defaults independently of record order") {
+    implicit val ss: SparkSession = spark
+    for (lowerType <- Seq("LO", "LI"); lower <- Seq(-4.0, 0.0); lowerFirst <- Seq(true, false)) {
+      val records = Seq(s"$lowerType bounds x $lower", "UP bounds x -1")
+      val ordered = if (lowerFirst) records else records.reverse
+      val text = s"NAME EXPLICIT_LOWER\nROWS\n N OBJ\nCOLUMNS\n x OBJ 1\nBOUNDS\n ${ordered.mkString("\n ")}\nENDATA\n"
+
+      fixture(text) { path =>
+        if (lower == 0.0) {
+          val error = intercept[LpModelException](LpMpsImport.read(path))
+
+          assert(error.getMessage.contains("Inconsistent bounds for 'x'"))
+        } else {
+          val declaration = LpMpsImport.read(path).model.inspect.variableDeclarations.head
+
+          assert(declaration.lower == -4.0 && declaration.upper.contains(-1.0))
+          assert(declaration.category == (if (lowerType == "LI") Integer else Continuous))
+        }
+      }
+    }
+  }
+
+  test("negative upper-only defaults apply only to the selected bound set") {
+    implicit val ss: SparkSession = spark
+    fixture("""NAME SELECTED_BOUNDS
+      |ROWS
+      | N OBJ
+      |COLUMNS
+      | x OBJ 1
+      |BOUNDS
+      | UP positive x 2
+      | UP negative x -1
+      |ENDATA
+      |""") { path =>
+      val positive = LpMpsImport.read(path).model.inspect.variableDeclarations.head
+      val negative = LpMpsImport.read(path, MpsReadOptions(boundSet = Some("negative")))
+        .model.inspect.variableDeclarations.head
+
+      assert(positive.lower == 0.0 && positive.upper.contains(2.0))
+      assert(negative.lower == Double.NegativeInfinity && negative.upper.contains(-1.0))
+    }
+  }
+
   test("malformed and unsupported data fail with source context; limits and named sets are explicit") {
     implicit val ss: SparkSession = spark
     val invalid = Vector(mip.replace("BV standard choose", "SC standard choose 2"),
