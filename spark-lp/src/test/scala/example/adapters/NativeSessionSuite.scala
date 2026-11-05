@@ -46,31 +46,49 @@ class NativeSessionSuite extends AnyFunSuite with DataFrameSuiteBase {
         assert(Thread.currentThread() eq driverThread)
         callbackCount += 1
       }.isRight)
+
       intercept[LpModelException](x.setBounds(0.0, Some(1.0)))
+
       val result = session.solve()
-      assert(result.status == LpStatus.Optimal && math.abs(result.objectiveValue - 13.0) < 1e-8)
-      assert(result.candidate.feasible && callbackCount > 0 && session.isCurrent(result))
+
+      assert(result.status == LpStatus.Optimal)
+      assert(math.abs(result.objectiveValue - 13.0) < 1e-8)
+      assert(result.candidate.feasible)
+      assert(callbackCount > 0)
+      assert(session.isCurrent(result))
       assert(math.abs(result.constraints.first().getAs[Double]("dual") - 1.0) < 1e-8)
       assert(math.abs(result.reducedCost(x).get - 1.0) < 1e-8)
       assert(session.information("simplex_iteration_count").right.get.toInt > 0)
-      assert(session.writeSolution(output).isRight && Files.size(output) > 0)
+      assert(session.writeSolution(output).isRight)
+      assert(Files.size(output) > 0)
       val revision = session.modelRevision
+
       assert(session.readSolution(output).isRight)
-      assert(session.modelRevision > revision && session.latestSolution.isEmpty && !session.isCurrent(result))
+      assert(session.modelRevision > revision)
+      assert(session.latestSolution.isEmpty)
+      assert(!session.isCurrent(result))
       intercept[IllegalStateException](session.writeSolution(root.resolve("stale.txt")))
+
       val again = session.solve()
+
       assert(again.objectiveValue == result.objectiveValue)
-      assert(session.isCurrent(again) && !session.isCurrent(result))
+      assert(session.isCurrent(again))
+      assert(!session.isCurrent(result))
       val failure = new java.util.concurrent.atomic.AtomicReference[Throwable]()
       val thread = new Thread(new Runnable {
         override def run(): Unit = { try session.parameter("presolve") catch { case e: Throwable => failure.set(e) }; () }
       })
-      thread.start(); thread.join()
+      // The session is confined to its driver thread; bound the rejected access.
+      thread.start()
+      thread.join(5000L)
+      assert(!thread.isAlive, "non-driver access did not finish within five seconds")
+
       assert(failure.get().isInstanceOf[IllegalStateException])
       val bytes = new java.io.ByteArrayOutputStream()
       val serialization = new java.io.ObjectOutputStream(bytes)
       try intercept[java.io.NotSerializableException](serialization.writeObject(session)) finally serialization.close()
       session.close()
+
       intercept[IllegalStateException](session.parameter("presolve"))
       intercept[LpModelException](again.value(x))
       x.setBounds(0.0, Some(1.0))
@@ -85,17 +103,22 @@ class NativeSessionSuite extends AnyFunSuite with DataFrameSuiteBase {
     val y = model.variable("y", upperBound = Some(3.0), category = Integer)
     model += 2.0 * x + y + 5.0
     model += (x + y <= 2.5)
+
     assert(model.prepareNative(new BoxAdapter).isLeft)
+
     val result = model.solve(new HighsPythonAdapter)
     try {
-      assert(result.status == LpStatus.Optimal && result.objectiveValue == 8.0)
-      assert(result.value(x) == 1.0 && result.value(y) == 1.0)
+      assert(result.status == LpStatus.Optimal)
+      assert(result.objectiveValue == 8.0)
+      assert(result.value(x) == 1.0)
+      assert(result.value(y) == 1.0)
       assert(result.backend.get.bestBound.contains(8.0))
       assert(result.reducedCost(x).isEmpty)
     } finally result.close()
     val sos = LpProblem("unsupported SOS")
     val z = sos.variable("z", upperBound = Some(1.0))
     sos.addSos1("one", Seq(z -> 1.0))
+
     intercept[LpModelException](sos.solve(new HighsPythonAdapter))
     intercept[LpModelException](model.solve(new BoxAdapter, LpAdapterOptions(requireDuals = true)))
   }
@@ -110,13 +133,16 @@ class NativeSessionSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       intercept[java.io.IOException](model.prepareNative(new HighsPythonAdapter(python = "/missing/python",
         artifacts = LpCommandOptions(temporaryRoot = Some(root)))))
+
       assert(empty(root))
       x.rename("still editable")
       val session = model.prepareNative(new HighsPythonAdapter(artifacts = LpCommandOptions(temporaryRoot = Some(root)))).right.get
       session.callback(_ => throw new IllegalStateException("callback failure"))
+
       assert(intercept[IllegalStateException](session.solve()).getMessage.contains("callback failure"))
       assert(empty(root))
       x.rename("editable after exception")
+
       intercept[IllegalStateException](session.latestSolution)
       session.close()
     } finally remove(root)
@@ -133,9 +159,12 @@ class NativeSessionSuite extends AnyFunSuite with DataFrameSuiteBase {
       LpAdapterOptions(shouldStop = () => true)).right.get
     try {
       val result = session.solve()
-      assert(result.status == LpStatus.Stopped && !result.candidate.available)
+
+      assert(result.status == LpStatus.Stopped)
+      assert(!result.candidate.available)
       assert(result.backend.get.diagnostics("termination") == "UserStop")
     } finally session.close()
+
     assert(empty(root))
     Files.delete(root)
     val noOperations = new LpNativeAccess {
@@ -144,6 +173,7 @@ class NativeSessionSuite extends AnyFunSuite with DataFrameSuiteBase {
       override def parameter(name: String): Either[LpUnsupported, String] = Left(LpUnsupported(name, "unsupported"))
       override def information(name: String): Either[LpUnsupported, String] = Left(LpUnsupported(name, "unsupported"))
     }
+
     assert(noOperations.callback(_ => ()).isLeft)
     assert(noOperations.readSolution(java.nio.file.Paths.get("unused")).isLeft)
     assert(noOperations.writeSolution(java.nio.file.Paths.get("unused")).isLeft)
@@ -176,10 +206,12 @@ class NativeSessionSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       val result = session.solve()
       val revision = session.modelRevision
+
       assert(session.setParameter("unsupported", "1").isLeft)
       assert(session.readSolution(java.nio.file.Paths.get("unused")).isLeft)
       assert(session.callback(_ => ()).isRight)
-      assert(session.modelRevision == revision && session.isCurrent(result))
+      assert(session.modelRevision == revision)
+      assert(session.isCurrent(result))
     } finally session.close()
   }
 }

@@ -19,11 +19,14 @@ class LpPrioritiesSuite extends AnyFunSuite with DataFrameSuiteBase {
       for (_ <- 1 to 2) {
         val result = model.solvePriorities(Seq(LpPriority(first, 0.5, 0.1), LpPriority(lpSum(y))))
         try {
-          assert(result.complete && result.stages.size == 2)
+          assert(result.complete)
+          assert(result.stages.size == 2)
           val finalStage = result.stages.last.solution.get
           val xv = finalStage.value(result.copied.variable(x))
+
           assert(math.abs(xv - (if (sense == Minimize) 1.0 else 9.0)) < 1e-5)
-          assert(model.constraints.size == 1 && model.handles.size == 2)
+          assert(model.constraints.size == 1)
+          assert(model.handles.size == 2)
         } finally result.close()
       }
     }
@@ -36,18 +39,23 @@ class LpPrioritiesSuite extends AnyFunSuite with DataFrameSuiteBase {
     val y = model.variable("y")
     model += (x <= 2.0)
     val priorities = Seq(LpPriority(lpSum(x), absoluteTolerance = 1e-7), LpPriority(-1.0 * y))
+
     val result = model.solvePriorities(priorities)
     try {
-      assert(!result.complete && result.stages.size == 2)
+      assert(!result.complete)
+      assert(result.stages.size == 2)
       assert(result.stages.head.solution.get.status == LpStatus.Optimal)
       assert(Set[LpStatus](LpStatus.Unbounded, LpStatus.InfeasibleOrUnbounded)
         .contains(result.stages.last.solution.get.status))
     } finally result.close()
+
     val stopped = model.solvePriorities(priorities, SolveConfig(control = SolveControl(shouldStop = () => true)))
     try {
-      assert(!stopped.complete && stopped.stages.size == 1)
+      assert(!stopped.complete)
+      assert(stopped.stages.size == 1)
       assert(!stopped.stages.head.solution.get.candidate.available)
     } finally stopped.close()
+
     intercept[IllegalArgumentException](model.solvePriorities(Seq.empty))
     for (t <- Seq(-1.0, Double.NaN, Double.PositiveInfinity)) {
       intercept[IllegalArgumentException](LpPriority(lpSum(x), t))

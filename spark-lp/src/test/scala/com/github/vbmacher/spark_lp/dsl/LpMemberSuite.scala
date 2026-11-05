@@ -14,6 +14,7 @@ class LpMemberSuite extends AnyFunSuite with DataFrameSuiteBase {
     val model = LpProblem("selected curvature")
     val xs = model.variables("x", Seq("a", "b").toDF("key"), $"key", upperBound = Some(3.0))
     model += QpObjective.squaredDeviation(xs("a"), 2.0) + lpSum(xs("b"))
+
     val result = model.solve()
     try {
       assert(result.status == LpStatus.Optimal)
@@ -32,6 +33,7 @@ class LpMemberSuite extends AnyFunSuite with DataFrameSuiteBase {
     val model = LpProblem("members")
     val family = model.variables("x", source, struct(col("group"), col("index")))
     val a = family(("a", 1))
+
     assert(reads.value == 0L)
     assert(a.selectedKey == family(("a", 1)).selectedKey)
     val scalar = model.variable("s", lowerBound = 1.0, upperBound = Some(1.0))
@@ -59,17 +61,23 @@ class LpMemberSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (family(1) >= 2.0)
     implicit val encoded: LpKeyEncoder[MemberKey] = LpKeyEncoder.instance(k => Seq(k.id))
     model += (family(MemberKey(2)) >= 3.0)
+
     val result = model.solve()
-    try assert(math.abs(result.value(family(MemberKey(2))) - 3.0) < 1e-6) finally result.close()
+    try {
+      assert(math.abs(result.value(family(MemberKey(2))) - 3.0) < 1e-6)
+    } finally result.close()
+
     intercept[LpModelException](family(null: String))
     for (member <- Seq(family(99), family("1"))) {
       val copy = model.copy()
       copy.model += (copy.variable(member) >= 0.0)
+
       assert(intercept[LpModelException](copy.model.solve()).getMessage.contains("key"))
     }
     val foreign = LpProblem("foreign")
     foreign += lpSum(family(1))
     foreign += (family(1) >= 0.0)
+
     intercept[LpModelException](foreign.solve())
   }
 }

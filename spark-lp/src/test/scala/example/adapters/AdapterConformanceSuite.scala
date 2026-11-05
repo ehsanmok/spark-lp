@@ -74,13 +74,16 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
       val x = model.variables("x", input, $"key", lowerBound = -1.4, upperBound = Some(2.8), category = category)
       model += x("a") - 2.0 * x("b") + 7.0
       val adapter = new BoxAdapter
+
       val result = model.solve(adapter)
       val builtIn = model.solve()
       try {
-        assert(result.status == LpStatus.Optimal && result.candidate.feasible)
+        assert(result.status == LpStatus.Optimal)
+        assert(result.candidate.feasible)
         assert(math.abs(result.objectiveValue - builtIn.objectiveValue) < 1e-8)
         assert(result.value(x("a")) == builtIn.value(x("a")))
-        assert(adapter.closed && result.backend.exists(_.independentlyValidated))
+        assert(adapter.closed)
+        assert(result.backend.exists(_.independentlyValidated))
         assert(result.values(x).count() == 2)
         assert(input.storageLevel.useMemory)
       } finally { result.close(); builtIn.close(); input.unpersist() }
@@ -98,9 +101,11 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
       val y = model.variable("integer", upperBound = Some(3.0), category = category)
       model += 2.0 * x + y + 7.0
       model += (x + y <= 3.5).named("capacity")
+
       val result = model.solve(new PythonHighsAdapter(root))
       try {
-        assert(result.status == LpStatus.Optimal && result.candidate.feasible)
+        assert(result.status == LpStatus.Optimal)
+        assert(result.candidate.feasible)
         assert(math.abs(result.objectiveValue - (if (category == Integer) 13.0 else 13.5)) < 1e-8)
         assert(result.constraints.first().getAs[String]("name") == "capacity")
         assert(empty(root))
@@ -114,6 +119,7 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", upperBound = Some(1.0))
     model += x + 3.0
     val id = model.inspect.variables.first().id
+    var closedCount = 0
     def adapter(result: => LpAdapterResult, caps: LpSolverCapabilities = LpSolverCapabilities()): LpSolverAdapter =
       new LpSolverAdapter {
         override val name = "fixture"
@@ -129,6 +135,7 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
       intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Optimal, Some(sc.parallelize(records))))))
     }
     val good = Some(model.candidateValues(Seq(x -> 0.0)))
+
     intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Optimal, good, Some(-3.0)))))
     intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Optimal, good, bestBound = Some(4.0)))))
     intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Optimal))))
@@ -137,8 +144,12 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
     intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Stopped)), LpAdapterOptions(requireDuals = true)))
     intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Stopped)), LpAdapterOptions(onProgress = Some(_ => ()))))
     intercept[LpModelException](model.solve(adapter(LpAdapterResult(LpStatus.Stopped)), LpAdapterOptions(maxVariables = 0)))
+
     val stopped = model.solve(adapter(LpAdapterResult(LpStatus.Stopped)))
-    try assert(!stopped.candidate.available && stopped.objectiveValue.isNaN) finally stopped.close()
+    try {
+      assert(!stopped.candidate.available)
+      assert(stopped.objectiveValue.isNaN)
+    } finally stopped.close()
   }
 
   test("required duals cover every constraint") {
@@ -161,7 +172,6 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
 
     intercept[LpModelException](model.solve(adapter, LpAdapterOptions(requireDuals = true)))
   }
-  private var closedCount = 0
 
   test("CLI failure, missing executable, malformed output, timeout, cancellation and retained artifacts") {
     implicit val ss: SparkSession = spark
@@ -180,17 +190,31 @@ class AdapterConformanceSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       intercept[java.io.IOException](model.solve(cli("", executable = "/missing/spark-lp-executable")))
       assert(empty(root))
+
       val failure = intercept[IllegalStateException](model.solve(cli("import sys; print('diagnostic'); sys.exit(7)")))
-      assert(failure.getMessage.contains("diagnostic") && empty(root))
+
+      assert(failure.getMessage.contains("diagnostic"))
+      assert(empty(root))
       intercept[IllegalStateException](model.solve(cli("pass")))
       intercept[IllegalArgumentException](model.solve(cli("import sys; open(sys.argv[1],'w').write('bad')")))
       assert(empty(root))
+
       val timeout = model.solve(cli("import time; time.sleep(10)"), LpAdapterOptions(timeLimit = Some(100.millis)))
-      try assert(timeout.status == LpStatus.Stopped && !timeout.candidate.available) finally timeout.close()
+      try {
+        assert(timeout.status == LpStatus.Stopped)
+        assert(!timeout.candidate.available)
+      } finally timeout.close()
+
       val cancel = model.solve(cli("raise RuntimeError('must not run')"), LpAdapterOptions(shouldStop = () => true))
-      try assert(cancel.status == LpStatus.Stopped && empty(root)) finally cancel.close()
+      try {
+        assert(cancel.status == LpStatus.Stopped)
+        assert(empty(root))
+      } finally cancel.close()
+
       val retained = model.solve(cli("import time; time.sleep(10)", retain = true), LpAdapterOptions(timeLimit = Some(100.millis)))
-      try assert(Files.isDirectory(java.nio.file.Paths.get(retained.backend.get.diagnostics("artifacts")))) finally retained.close()
+      try {
+        assert(Files.isDirectory(java.nio.file.Paths.get(retained.backend.get.diagnostics("artifacts"))))
+      } finally retained.close()
     } finally {
       val paths = Files.walk(root)
       try paths.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists) finally paths.close()

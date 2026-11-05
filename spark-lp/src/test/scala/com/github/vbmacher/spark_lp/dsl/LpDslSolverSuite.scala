@@ -26,6 +26,7 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(SolveConfig().resolvedNewtonSolver(m) == NewtonSolver.Cholesky)
       assert(SolveConfig(newtonSolver = NewtonSolver.Cholesky).resolvedNewtonSolver(m) == NewtonSolver.Cholesky)
     }
+
     assert(SolveConfig(maxLocalConstraints = 50).resolvedNewtonSolver(51) == NewtonSolver.ConjugateGradient)
     assert(SolveConfig(newtonSolver = NewtonSolver.ConjugateGradient).resolvedNewtonSolver(1) == NewtonSolver.ConjugateGradient)
   }
@@ -49,8 +50,10 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     val b = new DenseVector(bArray)
 
     val summary = LP.solveSummary(c, at, b)
+
     assert(summary.termination == LP.Termination.Converged)
-    assert(summary.iterations > 0 && summary.iterations <= 50)
+    assert(summary.iterations > 0)
+    assert(summary.iterations <= 50)
     assert(summary.primalResidual < 1e-8)
     assert(summary.dualResidual < 1e-8)
     assert(summary.dualityGap < 1e-8)
@@ -58,11 +61,14 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
 
     val expected = Vectors.dense(1.66666667, 5.83333333, 40.0, 0.0, 0.0, 13.33333333, 9.16666667)
     val xx = Vectors.dense(summary.x.flatMap(_.toArray).collect())
+
     assert(xx ~== expected absTol 1e-6)
 
     val c2: RDD[DenseVector] = sc.parallelize(cArray, 2).glom.map(new DenseVector(_))
     val at2 = sc.parallelize(BArray.toSeq, 2).map(v => Vectors.dense(v))
+
     val (value, _) = LP.solve(c2, at2, b)
+
     assert(value ~== summary.objectiveValue absTol 1e-9)
   }
 
@@ -82,6 +88,7 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(stopped.objectiveValue ~== limited.objectiveValue absTol 1e-9)
       assert(Vectors.dense(stopped.x.flatMap(_.toArray).collect()) ~==
         Vectors.dense(limited.x.flatMap(_.toArray).collect()) absTol 1e-9)
+
       assert(!Thread.currentThread().isInterrupted)
       assert(spark.range(2).count() == 2)
     } finally {
@@ -107,12 +114,14 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(amount * $"salt") <= 0.4).named("salt_max")
 
     val solution = model.solve(SolveConfig(maxIterations = 1))
+
     assert(solution.status == LpStatus.IterationLimit)
     assert(solution.iterations == 1)
     assert(!solution.residuals.primal.isNaN)
     assert(!solution.residuals.dual.isNaN)
     assert(!solution.residuals.gap.isNaN)
     // constraints diagnostics stay readable even for a non-feasible iterate
+
     assert(solution.constraints.count() == 3)
   }
 
@@ -127,7 +136,9 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(v) >= 4.0).named("floor")
 
     // maxLocalConstraints = 0: every model exceeds the Cholesky budget, so Auto must go matrix-free
+
     val solution = model.solve(SolveConfig(maxLocalConstraints = 0))
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 4.0 absTol 1e-6)
   }
@@ -142,10 +153,11 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += lpSum(v)
     model += (lpSum(v) >= 4.0).named("floor")
 
-    val e = intercept[LpModelException](
+    val error = intercept[LpModelException](
       model.solve(SolveConfig(maxLocalConstraints = 0, newtonSolver = NewtonSolver.Cholesky)))
-    assert(e.getMessage.contains("maxLocalConstraints"))
-    assert(e.getMessage.contains("ConjugateGradient"))
+
+    assert(error.getMessage.contains("maxLocalConstraints"))
+    assert(error.getMessage.contains("ConjugateGradient"))
   }
 
   test("linearly dependent constraint rows raise LpNumericalException naming the precondition") {
@@ -160,10 +172,11 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     // r3 = r1 + r2: not a duplicate row, but the Gramian is exactly singular
     model += (x + 2.0 * y + z === 2.0).named("r3")
 
-    val e = intercept[LpNumericalException](model.solve())
-    assert(e.phase == "initialization")
-    assert(e.completedIterations == 0)
-    assert(e.getMessage.contains("full row rank"))
+    val error = intercept[LpNumericalException](model.solve())
+
+    assert(error.phase == "initialization")
+    assert(error.completedIterations == 0)
+    assert(error.getMessage.contains("full row rank"))
   }
 
   test("compilation and solutions are deterministic across runs") {
@@ -188,17 +201,22 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
 
     val layout1 = compiled1.sortedCols.collect().map { case (g, cd) => (g, cd.setIndex, cd.enc, cd.kind, cd.cost) }
     val layout2 = compiled2.sortedCols.collect().map { case (g, cd) => (g, cd.setIndex, cd.enc, cd.kind, cd.cost) }
+
     assert(layout1.toSeq == layout2.toSeq)
     assert(compiled1.b.toArray.toSeq == compiled2.b.toArray.toSeq)
     // user columns are sorted by encoded key: alpha, bravo, charlie, delta, then the slack
+
     assert(layout1.map(_._1).toSeq == (0L until compiled1.numCols).toSeq)
 
     val (model3, v3) = build()
     val (model4, v4) = build()
+
     val values3 = model3.solve().values(v3).select("k", "lp_value").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     val values4 = model4.solve().values(v4).select("k", "lp_value").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     assert(values3.keySet == values4.keySet)
     values3.keySet.foreach { k => assert(values3(k) ~== values4(k) absTol 1e-9) }
   }
@@ -220,10 +238,13 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(v) === 1.0).named("mass")
 
     val first = model.solve()
+
     assert(first.objectiveValue ~== 1.0 absTol 1e-4, "with cost(a)=1 all mass goes to a")
 
     LpDslSolverSuiteState.costs = Map("a" -> 3.0, "b" -> 2.0)
+
     val second = model.solve()
+
     assert(second.objectiveValue ~== 2.0 absTol 1e-4, "the re-solve reads the changed source")
   }
 
@@ -244,22 +265,26 @@ class LpDslSolverSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(amount * $"salt") <= 0.4).named("salt_max")
 
     val compiled = new LpCompiler(model, SolveConfig()).compile()
+
     assert(compiled.numRows == 3)
     assert(compiled.numCols == 4, "two user variables plus one slack per inequality")
 
     val atRows = compiled.AT.collect()
+
     assert(atRows.length == 4)
     atRows.foreach { row =>
       assert(row.isInstanceOf[SparseVector], "AT rows must be sparse vectors, never dense structures")
       assert(row.size == compiled.numRows)
     }
     // slack columns carry exactly one entry; nothing is padded to dense
+
     assert(atRows.map(_.numNonzeros).sum == 2 * 3 + 2)
 
     // the solver's partitioning contract: partition i of c has as many elements as AT has rows there,
     // and no partition is empty
     val cSizes = compiled.c.map(_.size).collect()
     val atCounts = compiled.AT.mapPartitions(it => Iterator.single(it.size), preservesPartitioning = true).collect()
+
     assert(cSizes.toSeq == atCounts.toSeq)
     assert(cSizes.forall(_ > 0), "the compiler must not produce empty partitions")
   }

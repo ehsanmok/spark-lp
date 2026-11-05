@@ -20,6 +20,7 @@ class LpDualSuite extends AnyFunSuite with DataFrameSuiteBase {
       val shifted = solve(2.001)
       try {
         val price = base.constraints.first().getAs[Double]("dual")
+
         assert(math.abs(price - 3.0) < 1e-5)
         assert(math.abs((shifted.objectiveValue - base.objectiveValue) / 0.001 - price) < 1e-4)
         assert(base.constraints.first().isNullAt(base.constraints.schema.fieldIndex("dual_note")))
@@ -36,6 +37,7 @@ class LpDualSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x === 2.0).named("a")
     model += (2.0 * x === 4.0).named("b")
     model += (y === 1.0).named("fixed")
+
     val result = model.solve()
     try {
       assert(result.constraints.filter("dual IS NOT NULL").count() == 0)
@@ -45,9 +47,15 @@ class LpDualSuite extends AnyFunSuite with DataFrameSuiteBase {
     val z = mip.variable("z", upperBound = Some(3.0), category = Integer)
     mip += lpSum(z)
     mip += (z >= 1.0)
+
     val integer = mip.solve()
-    try assert(integer.constraints.filter("dual IS NOT NULL").count() == 0) finally integer.close()
+    try {
+      assert(integer.constraints.filter("dual IS NOT NULL").count() == 0)
+    } finally integer.close()
+
     val stopped = model.solve(SolveConfig(stopAfterIteration = Some(_ => true)))
-    try assert(stopped.constraints.filter("dual IS NOT NULL").count() == 0) finally stopped.close()
+    try {
+      assert(stopped.constraints.filter("dual IS NOT NULL").count() == 0)
+    } finally stopped.close()
   }
 }

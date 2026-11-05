@@ -20,22 +20,30 @@ class LpPortableModelSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (free === -1.0).named("free")
     val data = LpPortableModel.fromView(model.inspect)
     val imported = data.toProblem()
+
     val original = model.solve()
     val copied = imported.model.solve()
     try {
-      assert(original.status == LpStatus.Optimal && copied.status == LpStatus.Optimal)
+      assert(original.status == LpStatus.Optimal)
+      assert(copied.status == LpStatus.Optimal)
       assert(math.abs(copied.objectiveValue - 7.0) < 1e-6)
       val variableData = LpPortableModel.variable(xs(("a", 1)))
+
       assert(copied.value(imported.variable(variableData.id)) == 1.0)
       assert(imported.constraintIds.size == 3)
       val component = LpPortableModel.expression(xs.sum + 3.0 * free + 8.0)
+
       assert(imported.expression(component).constant == 8.0)
       assert(imported.expression(component).coefficient(imported.variable(LpPortableModel.variable(free).id)) == 3.0)
       val pending = LpPortableModel.constraint((free <= 0.0).named("pending"))
+
       assert(imported.constraint(pending).rhs == 0.0)
       val solutionData = LpSolutionData.fromSolution(copied)
-      assert(solutionData.values.get.count() == 4 && solutionData.objective.contains(copied.objectiveValue))
+
+      assert(solutionData.values.get.count() == 4)
+      assert(solutionData.objective.contains(copied.objectiveValue))
     } finally { original.close(); copied.close() }
+
     assert(model.constraints.size == 2)
   }
 
@@ -46,10 +54,12 @@ class LpPortableModelSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += lpSum(x)
     model += (x >= 0.0)
     val data = LpPortableModel.fromView(model.inspect)
+
     intercept[IllegalArgumentException](data.copy(schemaVersion = 2).toProblem())
     intercept[LpModelException](data.copy(variables = data.variables.union(data.variables)).toProblem())
     intercept[LpModelException](data.copy(objective = LpAffineData(spark.sparkContext.parallelize(Seq(
       LpCoefficient(LpVariableId(9, "missing"), 1.0))), 0.0)).toProblem())
+
     intercept[LpModelException](data.copy(objective = LpAffineData(data.objective.coefficients.map(_.copy(value = Double.NaN)), 0.0)).toProblem())
     intercept[LpModelException](data.toProblem(maxLocalRows = 0))
   }

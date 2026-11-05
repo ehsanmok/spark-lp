@@ -15,11 +15,13 @@ class CachedRDDsSuite extends AnyFunSuite with DataFrameSuiteBase {
     })
     try {
       val expected = (1 to 8).map(_ * 2).toArray
+
       assert(values.collect().sameElements(expected))
       assert(values.getCheckpointFile.nonEmpty)
       val before = evaluations.value
 
       values.unpersist(blocking = true)
+
       assert(values.collect().sameElements(expected))
       assert(evaluations.value == before)
     } finally caches.close()
@@ -33,6 +35,7 @@ class CachedRDDsSuite extends AnyFunSuite with DataFrameSuiteBase {
       val owned = caches.checkpoint(caller.map(_ * 2))
       owned.count()
       caches.close()
+
       assert(caller.getStorageLevel == StorageLevel.DISK_ONLY)
       assert(owned.getStorageLevel == StorageLevel.NONE)
       assert(owned.collect().sameElements(Array(2, 4, 6, 8)))

@@ -9,6 +9,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
 
   test("Auto uses the shared crossover and the DSL can lower the Cholesky resource cap") {
     val limit = NewtonSolver.AutoCholeskyLimit.toLong
+
     assert(SolveConfig().resolvedNewtonSolver(10000) == NewtonSolver.Cholesky)
     assert(SolveConfig().resolvedNewtonSolver(10001) == NewtonSolver.ConjugateGradient)
     assert(SolveConfig().resolvedNewtonSolver(limit) == NewtonSolver.Cholesky)
@@ -18,6 +19,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     assert(SolveConfig(maxLocalConstraints = 5000).resolvedNewtonSolver(5001) == NewtonSolver.ConjugateGradient)
     assert(SolveConfig(maxLocalConstraints = limit + 1).resolvedNewtonSolver(limit + 1) ==
       NewtonSolver.ConjugateGradient)
+
     assert(SolveConfig(newtonSolver = NewtonSolver.Cholesky).resolvedNewtonSolver(limit + 1) ==
       NewtonSolver.Cholesky)
   }
@@ -25,6 +27,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
   test("composite keys cannot collide through embedded separators or escapes") {
     val keys = Seq(Seq("a", "b"), Seq("a\u001Fs:b"), Seq("a\\u001Fs:b"),
       Seq("a\u001Fs:b", "c"), Seq("a", "b\u001Fs:c"))
+
     assert(keys.map(KeyCodec.encodeParts).distinct.size == keys.size)
   }
 
@@ -38,7 +41,9 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
       model += x + y + z
       model += (x + 2.0 * y + 3.0 * z === 6.0).named("first")
       model += (x + 3.0 * y + 2.0 * z === rhs).named("second")
+
       val result = model.solve()
+
       assert(result.status == LpStatus.Optimal)
       assert(math.abs(result.objectiveValue - optimum) < 1e-6)
       assert(result.constraints.collect().forall(r => r.isNullAt(7) && math.abs(r.getDouble(5)) < 1e-6))
@@ -54,7 +59,9 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
       val y = model.variable("y")
       model += cost * x + 2.0 * cost * y
       model += (x + y === rhs)
+
       val result = model.solve(SolveConfig(newtonSolver = solver))
+
       assert(result.status == LpStatus.Optimal)
       assert(math.abs(result.objectiveValue - cost * rhs) < 1e-6)
       assert(math.abs(result.value(x) + result.value(y) - rhs) < 1e-6)
@@ -68,6 +75,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
       val x = model.variable("x")
       model += x + constant
       model += (x >= 1.0)
+
       assert(intercept[LpModelException](model.solve()).getMessage.contains("objective"))
     }
   }
@@ -81,11 +89,14 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x >= 1.0)
     for (_ <- 1 to 2) {
       val result = model.solve()
+
       assert(math.abs(result.value(x) - 1.0) < 1e-6)
       result.close()
+
       assert(sc.getPersistentRDDs.keySet == before)
     }
     model += (x <= Double.NaN)
+
     intercept[LpModelException](model.solve())
     assert(sc.getPersistentRDDs.keySet == before)
   }
@@ -102,6 +113,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += amount.sum($"cost")
     model += (amount.sumBy("region")() === demand).named("demand")
     model += (amount.sumBy("region")($"cost") <= 10.0).named("budget")
+
     val solution = model.solve()
     try {
       assert(solution.status == LpStatus.Optimal)
@@ -109,6 +121,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(solution.constraints.count() == 4)
       val values = solution.values(amount).select("id", "lp_value").collect()
         .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
       assert(math.abs(values("a") - 4.0) < 1e-6)
       assert(math.abs(values("b")) < 1e-6)
       assert(math.abs(values("c") - 2.0) < 1e-6)
@@ -121,6 +134,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
       val model = LpProblem("bounds", Maximize)
       val x = model.variable("x", lowerBound = lower, upperBound = Some(3.0))
       model += 2.0 * x + 1.0
+
       val solution = model.solve()
       try {
         assert(solution.status == LpStatus.Optimal)
@@ -135,6 +149,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     val model = LpProblem("integer bounds")
     val x = model.variable("x", lowerBound = 0.0000001, upperBound = Some(1.0), category = Integer)
     model += lpSum(x)
+
     val solution = model.solve()
     try {
       assert(solution.status == LpStatus.Optimal)
@@ -149,6 +164,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", upperBound = Some(2.0), category = Integer)
     model += lpSum(x)
     model += (x <= 1.5)
+
     val solution = model.solve(SolveConfig(mip = MipConfig(maxNodes = 1)))
     try {
       assert(solution.status == LpStatus.IterationLimit)
@@ -156,6 +172,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(!solution.candidate.available)
       intercept[LpModelException](solution.value(x))
     } finally solution.close()
+
     assert(sc.getPersistentRDDs.keySet == before)
   }
 
@@ -173,6 +190,7 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     import org.apache.spark.mllib.linalg.Vectors
     val a = Vectors.dense(1.0, 2.0).toDense
     val b = Vectors.dense(-1.0).toDense
+
     intercept[IllegalArgumentException](a.entrywiseProd(b))
     intercept[IllegalArgumentException](a.entrywiseNegDiv(b))
   }
@@ -184,9 +202,11 @@ class LpDslReviewSuite extends AnyFunSuite with DataFrameSuiteBase {
     val c = sc.parallelize(Seq(new DenseVector(Array(2.0, 4.0, -1.0, 3.0))), 1)
     val at = sc.parallelize(Seq(Vectors.dense(1.0, 3.0), Vectors.dense(2.0, 1.0),
       Vectors.dense(3.0, 4.0), Vectors.dense(4.0, 2.0)), 1)
+
     val summary = LP.solveSummary(c, at, Vectors.dense(10.0, 10.0).toDense, maxIter = 2)
     try {
       // Independent dense Newton calculation; using the initial mu gives 1.07188416266.
+
       assert(math.abs(summary.objectiveValue - 1.0716595749289968) < 1e-8)
       assert(summary.termination == LP.Termination.IterationLimit)
     } finally summary.x.unpersist(blocking = false)

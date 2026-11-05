@@ -17,8 +17,10 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x >= 2.0).named("floor")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Infeasible)
     val proof = solution.evidence.get.asInstanceOf[InfeasibilityCertificate]
+
     assert(proof.verify(1e-6).valid)
     assert(!proof.copy(rows = proof.rows.map(_ * -1.0)).verify(1e-6).valid)
     assert(solution.objectiveValue.isNaN)
@@ -28,6 +30,7 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     // so their slacks sum to -1 and at least one is materially negative
     val slacks = solution.constraints.select("name", "slack").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     assert(slacks.keySet == Set("cap", "floor"))
     assert(math.abs(slacks("cap") + slacks("floor") + 1.0) < 1e-6)
     assert(slacks.values.min < -0.4)
@@ -41,8 +44,10 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x >= 1.0).named("floor")
 
     val solution = model.solve(SolveConfig(tolerance = 1e-4))
+
     assert(solution.status == LpStatus.Unbounded)
     val proof = solution.evidence.get.asInstanceOf[UnboundedDirection]
+
     assert(proof.verify(1e-4).valid)
     assert(!proof.copy(direction = proof.direction.mapValues(-_)).verify(1e-4).valid)
     assert(solution.objectiveValue == Double.PositiveInfinity)
@@ -57,8 +62,10 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x >= 1.0).named("floor")
 
     val solution = model.solve(SolveConfig(tolerance = 1e-4))
+
     assert(solution.status == LpStatus.Unbounded)
     val proof = solution.evidence.get.asInstanceOf[UnboundedDirection]
+
     assert(proof.verify(1e-4).valid)
     assert(!proof.copy(direction = proof.direction.mapValues(-_)).verify(1e-4).valid)
     assert(solution.objectiveValue == Double.NegativeInfinity)
@@ -73,9 +80,12 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
 
     // at the default tolerance the last iterate does not qualify as primal-feasible, so the
     // dual-infeasibility certificate alone cannot distinguish infeasible from unbounded
+
     val solution = model.solve()
+
     assert(solution.status == LpStatus.InfeasibleOrUnbounded)
     val proof = solution.evidence.get.asInstanceOf[UnboundedDirection]
+
     assert(proof.point.isEmpty)
     assert(!proof.verify().valid)
     assert(solution.objectiveValue.isNaN)
@@ -93,8 +103,10 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (w === 5.0).named("pin")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Infeasible)
     val proof = solution.evidence.get.asInstanceOf[InfeasibilityCertificate]
+
     assert(proof.verify(1e-6).valid)
     assert(!proof.copy(rows = proof.rows.map(_ * -1.0)).verify(1e-6).valid)
     assert(solution.objectiveValue.isNaN)
@@ -102,6 +114,7 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     // the violated row is visible in the diagnostics
     val slacks = solution.constraints.select("name", "slack").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     assert(slacks("impossible") < -0.4)
   }
   test("certificates retain scaled rows, shifts, fixed values and explicit upper bounds") {
@@ -111,10 +124,12 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     val fixed = model.variable("fixed", lowerBound = 5.0, upperBound = Some(5.0))
     model += x + fixed
     model += (7.0 * x + fixed >= 26.0).named("scaled floor")
+
     val solution = model.solve()
     try {
       assert(solution.status == LpStatus.Infeasible)
       val proof = solution.evidence.get.asInstanceOf[InfeasibilityCertificate]
+
       assert(proof.model.rows.head.name == "scaled floor")
       assert(proof.verify(1e-6).valid)
       assert(!proof.copy(bounds = proof.bounds.mapValues { case (l, _) => (l, 0.0) }).verify(1e-6).valid)
@@ -129,6 +144,7 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
       val fixed = model.variable("fixed", lowerBound = 3.0, upperBound = Some(3.0))
       model += (if (sense == Minimize) -1.0 * x + fixed else x + fixed)
       model += (x >= 1.0).named("floor")
+
       val solution = model.solve(SolveConfig(tolerance = 1e-4))
       try {
         val proof = solution.evidence.get.asInstanceOf[UnboundedDirection]
@@ -140,6 +156,7 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
           assert(proof.copy(point = Some(witness)).verify(1e-4).valid)
         }
         val fixedKeys = proof.model.variables.filter(_._2.name == "fixed").keys.collect().toSet
+
         assert(proof.direction.filter(x => fixedKeys(x._1)).values.collect().forall(_ == 0.0))
       } finally solution.close()
     }
@@ -150,6 +167,7 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
     val original = EvidenceModel(Vector(EvidenceRow("impossible", None, "==", -1.0)),
       sc.parallelize(Seq(key -> EvidenceVariable("x", 0.0, None, 1.0, Map(0 -> 1.0)))), Minimize)
     val proof = InfeasibilityCertificate(original, Vector(-1.0), sc.parallelize(Seq(key -> (1.0, 0.0))))
+
     assert(proof.verify().valid)
     assert(!proof.copy(bounds = sc.emptyRDD[((Int, String), (Double, Double))]).verify().valid)
     assert(!proof.copy(bounds = sc.parallelize(Seq(key -> (Double.NaN, 0.0)))).verify().valid)
@@ -163,8 +181,10 @@ class LpDslInfeasibilitySuite extends AnyFunSuite with DataFrameSuiteBase {
       sc.parallelize(Seq(key -> EvidenceVariable("x", 0.0, None, -1.0, Map.empty, curvature = 2.0))), Minimize)
     val direction = sc.parallelize(Seq(key -> 1.0))
     val point = sc.parallelize(Seq(key -> 0.0))
+
     assert(!UnboundedDirection(model, direction, Some(point)).verify().valid)
     val linear = model.copy(variables = model.variables.mapValues(_.copy(curvature = 0.0)))
+
     assert(UnboundedDirection(linear, direction, Some(point)).verify().valid)
   }
 

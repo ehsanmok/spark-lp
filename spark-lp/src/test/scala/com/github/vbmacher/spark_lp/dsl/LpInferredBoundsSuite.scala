@@ -15,16 +15,27 @@ class LpInferredBoundsSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x >= -2.2)
     model += (x <= 3.8)
     model += (y <= x + 2.0)
+
     val result = model.solve()
     try {
-      assert(result.status == LpStatus.Optimal && math.abs(result.objectiveValue - 13.0) < 1e-6)
-      assert(result.value(x) == 3.0 && result.value(y) == 5.0)
-      assert(x.lowerBound.isNegInfinity && x.upperBound.isEmpty && y.upperBound.isEmpty)
+      assert(result.status == LpStatus.Optimal)
+      assert(math.abs(result.objectiveValue - 13.0) < 1e-6)
+      assert(result.value(x) == 3.0)
+      assert(result.value(y) == 5.0)
+      assert(x.lowerBound.isNegInfinity)
+      assert(x.upperBound.isEmpty)
+      assert(y.upperBound.isEmpty)
+
       val report = model.validateCandidate(model.candidateValues(Seq(x -> result.value(x), y -> result.value(y))))
-      try assert(report.feasible) finally report.close()
+      try {
+        assert(report.feasible)
+      } finally report.close()
     } finally result.close()
+
     val relaxation = model.solve(SolveConfig(relaxIntegrality = true))
-    try assert(math.abs(relaxation.objectiveValue - 14.6) < 1e-6) finally relaxation.close()
+    try {
+      assert(math.abs(relaxation.objectiveValue - 14.6) < 1e-6)
+    } finally relaxation.close()
   }
 
   test("keyed constraints infer distinct bounds without changing declared family metadata") {
@@ -35,11 +46,13 @@ class LpInferredBoundsSuite extends AnyFunSuite with DataFrameSuiteBase {
     val xs = model.variables("x", Seq("a", "b").toDF("key"), $"key", category = Integer)
     model += xs.sum
     model += (xs.sumBy("key")() <= Seq(("a", 2.8), ("b", 4.2)).toDF("key", "rhs"))
+
     val result = model.solve()
     try {
       assert(result.status == LpStatus.Optimal)
       assert(math.abs(result.objectiveValue - 6.0) < 1e-6)
-      assert(result.value(xs("a")) == 2.0 && result.value(xs("b")) == 4.0)
+      assert(result.value(xs("a")) == 2.0)
+      assert(result.value(xs("b")) == 4.0)
       assert(xs.upperBound.isEmpty)
     } finally result.close()
   }
@@ -51,16 +64,23 @@ class LpInferredBoundsSuite extends AnyFunSuite with DataFrameSuiteBase {
     val free = impossible.variable("free", Double.NegativeInfinity)
     impossible += -1.0 * free
     impossible += (x === 0.5)
+
     val infeasible = impossible.solve()
-    try { assert(infeasible.status == LpStatus.Infeasible); assert(!infeasible.candidate.available) } finally infeasible.close()
+    try {
+      assert(infeasible.status == LpStatus.Infeasible)
+      assert(!infeasible.candidate.available)
+    } finally infeasible.close()
 
     val unbounded = LpProblem("rowless integer", Maximize)
     val z = unbounded.variable("z", category = Integer)
     unbounded += lpSum(z)
+
     val ray = unbounded.solve()
     try {
-      assert(ray.status == LpStatus.Unbounded && ray.objectiveValue.isPosInfinity)
-      assert(ray.value(z) == 0.0 && ray.candidate.feasible)
+      assert(ray.status == LpStatus.Unbounded)
+      assert(ray.objectiveValue.isPosInfinity)
+      assert(ray.value(z) == 0.0)
+      assert(ray.candidate.feasible)
       assert(ray.mip.exists(_.termination == "AnalyticalUnbounded"))
     } finally ray.close()
 
@@ -69,9 +89,14 @@ class LpInferredBoundsSuite extends AnyFunSuite with DataFrameSuiteBase {
     val b = unresolved.variable("b", Double.NegativeInfinity, category = Integer)
     unresolved += lpSum(a)
     unresolved += (a - b === 0.5)
+
     val error = intercept[LpModelException](unresolved.solve())
+
     assert(error.getMessage.contains("could not infer a finite integer interval"))
+
     val lp = unresolved.solve(SolveConfig(relaxIntegrality = true))
-    try assert(lp.status == LpStatus.Unbounded || lp.status == LpStatus.InfeasibleOrUnbounded) finally lp.close()
+    try {
+      assert(lp.status == LpStatus.Unbounded || lp.status == LpStatus.InfeasibleOrUnbounded)
+    } finally lp.close()
   }
 }

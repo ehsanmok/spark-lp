@@ -17,6 +17,7 @@ class LpReducedCostSuite extends AnyFunSuite with DataFrameSuiteBase {
       val sign = if (sense == Minimize) 1.0 else -1.0
       model += sign * (2.0 * lower - 3.0 * upper + 4.0 * free + fixed)
       model += (free === -2.0)
+
       val result = model.solve()
       try {
         assert(result.status == LpStatus.Optimal)
@@ -36,14 +37,17 @@ class LpReducedCostSuite extends AnyFunSuite with DataFrameSuiteBase {
     val xs = model.variables("x", Seq("a", "b").toDF("key"), $"key", upperBound = Some(3.0))
     model += xs.sum
     model += (xs("a") >= 1.0)
+
     val result = model.solve()
     try {
       assert(math.abs(result.reducedCost(xs("a")).get) < 1e-6)
       assert(math.abs(result.reducedCost(xs("b")).get - 1.0) < 1e-6)
       assert(result.reducedCosts(xs).count() == 2)
       result.close()
+
       intercept[LpModelException](result.reducedCost(xs("a")))
     } finally result.close()
+
     val stopped = model.solve(SolveConfig(stopAfterIteration = Some(_ => true)))
     try {
       assert(stopped.reducedCost(xs("a")).isEmpty)

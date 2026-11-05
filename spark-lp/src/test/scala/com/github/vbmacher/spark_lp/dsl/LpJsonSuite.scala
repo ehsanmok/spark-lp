@@ -22,24 +22,33 @@ class LpJsonSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += xs.sum + free + fixed + 0.1234567890123456
     model += (xs.sum <= 1.5)
     model += (free === -1.0)
+
     val original = model.solve()
     val directory = Files.createTempDirectory("spark-lp-json-").resolve("model").toString
     try {
       LpJson.write(model, directory, Some(LpSolutionData.fromSolution(original)))
+
       intercept[LpModelException](LpJson.write(model, directory))
       val document = LpJson.read(directory)
+
       assert(!document.solutionMetadataVerified)
-      assert(document.model.name == model.name && document.model.objective.constant == 0.1234567890123456)
+      assert(document.model.name == model.name)
+      assert(document.model.objective.constant == 0.1234567890123456)
       assert(document.solution.get.residuals.nonEmpty)
       val imported = document.model.toProblem()
+
       val result = imported.model.solve()
       try {
         assert(math.abs(result.objectiveValue - 2.1234567890123456) < 1e-6)
         assert(result.status == LpStatus.Optimal)
+
         val report = imported.model.validateCandidate(document.solution.get.values.get)
-        try assert(report.feasible) finally report.close()
+        try {
+          assert(report.feasible)
+        } finally report.close()
       } finally result.close()
       LpJson.write(model, directory, overwrite = true)
+
       assert(LpJson.read(directory).solution.isEmpty)
     } finally {
       original.close()
@@ -65,8 +74,10 @@ class LpJsonSuite extends AnyFunSuite with DataFrameSuiteBase {
         try out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)) finally out.close()
       }
       replace(original.replace("\"schemaVersion\":1", "\"schemaVersion\":99"))
+
       intercept[LpModelException](LpJson.read(directory))
       replace(original.replace("\"Continuous\"", "\"InvalidCategory\""))
+
       intercept[LpModelException](LpJson.read(directory))
     } finally {
       val path = new org.apache.hadoop.fs.Path(directory)
@@ -91,6 +102,7 @@ class LpJsonSuite extends AnyFunSuite with DataFrameSuiteBase {
         finally children.close()
         if (!temporarySeen) Thread.`yield`()
       }
+
       assert(temporarySeen, "writer did not expose its temporary publication directory")
       Files.createDirectories(directory)
       val marker = Files.write(directory.resolve("concurrent-marker"), Array[Byte](1))

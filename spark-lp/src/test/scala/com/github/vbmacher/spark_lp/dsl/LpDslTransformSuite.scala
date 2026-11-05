@@ -17,6 +17,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x <= 10.0).named("cap")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 5.0 absTol 1e-6)
     assert(solution.value(x) ~== 5.0 absTol 1e-6)
@@ -30,6 +31,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x <= 10.0).named("cap")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 17.0 absTol 1e-6)
     assert(solution.value(x) ~== 5.0 absTol 1e-6)
@@ -43,6 +45,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x <= 10.0).named("cap")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 27.0 absTol 1e-6)
     assert(solution.value(x) ~== 10.0 absTol 1e-6)
@@ -59,13 +62,16 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(v) <= 100.0).named("loose")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 10.0 absTol 1e-5)
     val values = solution.values(v).select("k", "lp_value").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     assert(values("a") ~== 5.0 absTol 1e-5)
     assert(values("b") ~== 5.0 absTol 1e-5)
     // bound rows are internal: only the user constraint appears in diagnostics
+
     assert(solution.constraints.collect().map(_.getString(0)).toSeq == Seq("loose"))
   }
 
@@ -80,6 +86,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(f) === 3.0).named("fixed_only")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.value(f) == 3.0, "a fixed variable reports its bound exactly, not approximately")
     assert(solution.value(y) ~== 5.0 absTol 1e-4)
@@ -89,9 +96,12 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     val rows = solution.constraints.collect().map(r => r.getString(0) -> r).toMap
     // the fixed-only row was never sent to the solver, but stays visible with a note
     val fixedOnly = rows("fixed_only")
-    assert(!fixedOnly.isNullAt(7) && fixedOnly.getString(7).contains("presolved"))
+
+    assert(!fixedOnly.isNullAt(7))
+    assert(fixedOnly.getString(7).contains("presolved"))
     assert(fixedOnly.getDouble(2) ~== 3.0 absTol 1e-12, "activity includes the fixed contribution")
     // the mixed row reports full activity including the fixed variable
+
     assert(rows("uses_fixed").getDouble(2) ~== 8.0 absTol 1e-4)
   }
 
@@ -104,6 +114,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (y >= 2.0).named("floor")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 42.0 absTol 1e-5)
   }
@@ -118,6 +129,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x - y === -7.0).named("diff")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.value(x) ~== -2.0 absTol 1e-4)
     assert(solution.value(y) ~== 5.0 absTol 1e-4)
@@ -130,6 +142,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", lowerBound = Double.NegativeInfinity, upperBound = Some(1.0))
     model += lpSum(x)
     model += (x === 0.0).named("pin")
+
     val result = model.solve()
     try {
       assert(result.status == LpStatus.Optimal)
@@ -143,8 +156,10 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", lowerBound = 2.0, upperBound = Some(1.0))
     model += lpSum(x)
     model += (x === 0.0).named("pin")
-    val e = intercept[LpModelException](model.solve())
-    assert(e.getMessage.contains("lowerBound"))
+
+    val error = intercept[LpModelException](model.solve())
+
+    assert(error.getMessage.contains("lowerBound"))
   }
 
   test("NaN and +inf lower bounds and non-finite upper bounds are rejected") {
@@ -155,6 +170,7 @@ class LpDslTransformSuite extends AnyFunSuite with DataFrameSuiteBase {
       val x = model.variable("x", lowerBound = lb, upperBound = ub)
       model += lpSum(x)
       model += (x === 0.0).named("pin")
+
       intercept[LpModelException](model.solve())
     }
 

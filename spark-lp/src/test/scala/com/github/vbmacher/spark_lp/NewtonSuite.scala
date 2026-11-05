@@ -22,11 +22,14 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     val g = BDM.eye[Double](5)
     g(0, 1) = 0.1
     g(3, 4) = 0.1
+
     assert(newton.CholeskyFactory.blockEnds(packed(g), 5).sameElements(Array(2, 3, 5)))
     g(1, 3) = 1e-100
+
     assert(newton.CholeskyFactory.blockEnds(packed(g), 5).sameElements(Array(5)))
     g(1, 3) = 0.0
     g(0, 4) = 0.1
+
     assert(newton.CholeskyFactory.blockEnds(packed(g), 5).sameElements(Array(5)))
   }
 
@@ -40,7 +43,9 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       Seq(BDV(1.0, 2.0, 3.0, 4.0, 5.0), BDV(-3.0, 0.0, 1.0, -1.0, 2.0)).foreach { rhs =>
         val input = new DenseVector(rhs.toArray)
+
         val actual = new BDV(system.solve(input).values)
+
         assert(norm(actual - ((b.t * diag(w) * b) \ rhs)) < 1e-12)
         assert(input.values.sameElements(rhs.toArray))
       }
@@ -63,10 +68,12 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
       fetched += j
       (0 until 3).map(i => g(i, j)).toArray
     }, 1e-8)
+
     assert(partial.indices.sameElements(Array(0, 2)))
     assert(fetched.toSeq == Seq(0, 2))
     val rhs = BDV(1.0, 2.0, -3.0)
     // Only one row remains: its Schur diagonal is exact, so M = G.
+
     assert(norm(partial(rhs) - (g \ rhs)) < 1e-12)
 
     val rankOne = new newton.PartialCholesky(diag(g).toArray, 1,
@@ -74,15 +81,18 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     val explicit = g.copy
     explicit(1, 2) = 0.0
     explicit(2, 1) = 0.0
+
     assert(norm(rankOne(rhs) - (explicit \ rhs)) < 1e-12)
   }
 
   test("unstable pivots stop at the floor without fetching a dense Gramian") {
     val partial = new newton.PartialCholesky(Array(1e-8, 1e-8), 2,
       _ => fail("No column should be fetched for a pivot at the regularization floor"), 1e-8)
+
     assert(partial.indices.isEmpty)
     assert(norm(partial(BDV(1e-8, 2e-8)) - BDV(1.0, 2.0)) < 1e-12)
     partial.extendTo(2)
+
     assert(partial.indices.isEmpty)
     intercept[IllegalStateException] {
       new newton.PartialCholesky(Array(1.0, 1.0), 2, j =>
@@ -103,9 +113,11 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     Seq(0, 1, 2, 3, 3, 1).foreach { rank =>
       incremental.extendTo(rank)
       val fresh = new newton.PartialCholesky(diag(g).toArray, fetched.size, column, 1e-8)
+
       assert(incremental.indices.sameElements(fresh.indices))
       assert(norm(incremental(rhs) - fresh(rhs)) < 1e-14)
     }
+
     assert(fetched.toSeq == Seq(0, 2, 1))
     assert(progress.toSeq == Seq(1, 2, 3))
     assert(norm(incremental(rhs) - (g \ rhs)) < 1e-12)
@@ -134,12 +146,14 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
         val system = factory.build(rows, m, weights)
         try {
           val solution = system.solve(rhs)
+
           assert(pivots.toSeq == (1 to m))
           val p = sc.broadcast(solution)
           try {
             val scale = if (weights.isDefined) 1.0 else 1.0 / (1.0 + factory.primalRegularization)
             val actual = newton.CgFactory.regularizedProduct(new DMatrixOps(rows), weights.map(_.squared),
               p, factory.dualRegularization, scale)
+
             assert(norm(new BDV(actual.values) - new BDV(rhs.values)) / norm(new BDV(rhs.values)) < 1e-10)
           } finally p.destroy()
         } finally system.release()
@@ -163,6 +177,7 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     val p = sc.broadcast(new DenseVector(Array(0.7, -0.3)))
     try {
       val actual = newton.CgFactory.regularizedProduct(new DMatrixOps(rows), Some(weights.squared), p, delta)
+
       assert(norm(new BDV(actual.values) - g * new BDV(p.value.values)) < 1e-12)
     } finally p.destroy()
     val factory = new newton.CgFactory(1e-12, 50, config = CgConfig(rho, delta))
@@ -171,11 +186,13 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
       Seq(-x *:* s, BDV(-0.3, 0.2, -0.5)).foreach { q =>
         val h = rc + q /:/ x
         val rhs = -rb - b.t * w * h
+
         val dy = new BDV(system.solve(new DenseVector(rhs.toArray)).values)
         val (dxv, dsv) = weights.recoverDirections(vector(h.toArray), vector(rc.toArray),
           vector((b * dy).toArray), rho)
         val dx = local(dxv)
         val ds = local(dsv)
+
         assert(norm(dy - (g \ rhs)) < 1e-11)
         assert(norm(b.t * dx + delta * dy + rb) < 1e-11)
         assert(norm(b * dy + ds - rho * dx + rc) < 1e-11)
@@ -201,6 +218,7 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     val expectedS = sh + (0.5 * comp / xh.toArray.sum)
     val result = Initialize.init(vector(c.toArray), matrix(b), new DenseVector(rhs.toArray),
       new newton.CgFactory(1e-12, 50, config = CgConfig(rho, delta))(spark))
+
     assert(norm(new BDV(result.lambda.values) - y) < 1e-10)
     assert(norm(local(result.x) - expectedX) < 1e-10)
     assert(norm(local(result.s) - expectedS) < 1e-10)
@@ -226,6 +244,7 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       val solution = new BDV(system.solve(new DenseVector(rhs.toArray)).values)
       val g = (b.t * b) / (1.0 + 1e-8) + 1e-8 * BDM.eye[Double](2)
+
       assert(norm(rhs - g * solution) < 1e-12 * norm(rhs))
       assert(factory.maximumRank == 2)
       assert(factory.innerIterations > 1)
@@ -242,11 +261,14 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
         val result = LP.solveSummary(vector(costs), matrix(b), new DenseVector(rhs), solver = backend, maxIter = 100)
         try {
           assert(result.termination == LP.Termination.Converged, s"$backend: $result")
-          assert(result.primalResidual < 1e-8 && result.dualResidual < 1e-8 && result.dualityGap < 1e-8)
+          assert(result.primalResidual < 1e-8)
+          assert(result.dualResidual < 1e-8)
+          assert(result.dualityGap < 1e-8)
           assert(norm(b.t * local(result.x) - new BDV(rhs)) / (1.0 + norm(new BDV(rhs))) < 1e-8)
           result.objectiveValue
         } finally result.x.unpersist()
       }
+
       assert(math.abs(results(0) - results(1)) < 1e-6)
     }
   }
@@ -254,12 +276,14 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
   test("dependent feasible rows work with regularization and original residuals still gate convergence") {
     implicit val session: SparkSession = spark
     val rows = matrix(BDM((1.0, 1.0), (1.0, 1.0)))
+
     val result = LP.solveSummary(vector(Array(1.0, 2.0)), rows, new DenseVector(Array(1.0, 1.0)),
       solver = NewtonSolver.ConjugateGradient)
     try {
       assert(result.termination == LP.Termination.Converged)
       assert(math.abs(result.objectiveValue - 1.0) < 1e-7)
     } finally result.x.unpersist()
+
     val limited = LP.solveSummary(vector(Array(1.0, 2.0)), rows, new DenseVector(Array(1.0, 1.0)),
       solver = NewtonSolver.ConjugateGradient, maxIter = 1, cgConfig = CgConfig(100.0, 100.0))
     try {
@@ -279,6 +303,7 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
     rhs(m - 1) = 1e-8
     try {
       val solution = system.solve(new DenseVector(rhs)).values
+
       assert(math.abs(solution(0) - 1.0 / (1.0 / (1.0 + 1e-8) + 1e-8)) < 1e-10)
       assert(math.abs(solution(m - 1) - 1.0) < 1e-10)
       assert(factory.maximumRank <= 2)
@@ -288,11 +313,13 @@ class NewtonSuite extends AnyFunSuite with DataFrameSuiteBase {
 
   test("matrix-free unbounded reporting is backed by an original-LP certificate") {
     implicit val session: SparkSession = spark
+
     val result = LP.solveSummary(vector(Array(-1.0, 0.0)), matrix(new BDM(2, 1, Array(1.0, -1.0))),
       new DenseVector(Array(1.0)), solver = NewtonSolver.ConjugateGradient)
     try {
       assert(result.termination == LP.Termination.DualInfeasible)
       val ray = local(result.dualCertificate.get)
+
       assert(ray.toArray.forall(_ >= 0.0))
       assert(math.abs(ray(0) - 1.0) < 1e-10)
       assert(math.abs(ray(0) - ray(1)) <= 1e-8)

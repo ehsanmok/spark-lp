@@ -30,7 +30,8 @@ class LpSolveTimingsSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       assert(result.status == LpStatus.Optimal)
       assert(result.timings == LpSolveTimings(2.0, 0.0, 3.0, 5.0, Some(4.0)))
-      assert(source.wallCalls == 3 && source.cpuCalls == 2)
+      assert(source.wallCalls == 3)
+      assert(source.cpuCalls == 2)
     } finally result.close()
   }
 
@@ -49,7 +50,8 @@ class LpSolveTimingsSuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(result.status == LpStatus.Stopped)
       assert(result.stopReason.contains(StopReason.UserRequested))
       assert(result.timings == LpSolveTimings(1.0, 3.0, 6.0, 10.0, None))
-      assert(source.wallCalls == 4 && source.cpuCalls == 2)
+      assert(source.wallCalls == 4)
+      assert(source.cpuCalls == 2)
     } finally result.close()
   }
 
@@ -67,12 +69,14 @@ class LpSolveTimingsSuite extends AnyFunSuite with DataFrameSuiteBase {
 
     val config = SolveConfig(mip = MipConfig(control = MipControl(
       shouldStop = () => true, nanoTime = searchClock)))
+
     val result = model.solve(config, source.clock)
     try {
       assert(result.status == LpStatus.Stopped)
       assert(result.mip.exists(m => m.processedNodes == 0 && m.elapsedSeconds >= 1000.0))
       assert(result.timings == LpSolveTimings(2.0, 5.0, 4.0, 11.0, Some(9.0)))
-      assert(source.wallCalls == 4 && source.cpuCalls == 2)
+      assert(source.wallCalls == 4)
+      assert(source.cpuCalls == 2)
     } finally result.close()
   }
 }

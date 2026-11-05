@@ -14,7 +14,9 @@ class MipCoverCutsSuite extends AnyFunSuite {
     val cols = columns(weights)
     val cuts = MipCoverCuts.generate(cols, Array(12.0), Array.fill(6)(0.0), Array.fill(6)(1.0), Set.empty,
       Map(0L -> 1.0, 1L -> 1.0, 2L -> 1.0, 3L -> 0.6), global = true, enabled, Set.empty, 10)
-    assert(cuts.nonEmpty && cuts.forall(_.scope == GlobalCut))
+
+    assert(cuts.nonEmpty)
+    assert(cuts.forall(_.scope == GlobalCut))
     for (mask <- 0 until 64) {
       val bits = weights.indices.map(i => if ((mask & (1 << i)) != 0) 1.0 else 0.0)
       if (weights.zip(bits).map { case (a, b) => a * b }.sum <= 12.0)
@@ -22,6 +24,7 @@ class MipCoverCutsSuite extends AnyFunSuite {
     }
     val repeated = MipCoverCuts.generate(cols, Array(12.0), Array.fill(6)(0.0), Array.fill(6)(1.0), Set.empty,
       Map(0L -> 1.0, 1L -> 1.0, 2L -> 1.0, 3L -> 0.6), global = true, enabled, cuts.map(_.signature).toSet, 10)
+
     assert(repeated.isEmpty)
   }
 
@@ -31,7 +34,9 @@ class MipCoverCutsSuite extends AnyFunSuite {
     val upper = Array(1.0, 1.0, 1.0)
     val cut = MipCoverCuts.generate(cols, Array(1.0), lower, upper, Set.empty,
       Map(0L -> 0.5), global = false, enabled, Set.empty, 10).head
-    assert(cut.columns == Vector(0L) && cut.rhs == 0.0)
+
+    assert(cut.columns == Vector(0L))
+    assert(cut.rhs == 0.0)
     assert(cut.scope.permits(lower, upper))
     assert(cut.scope.permits(Array(0.0, 1.0, 0.0), Array(0.0, 1.0, 1.0)))
     assert(!cut.scope.permits(Array(0.0, 0.0, 0.0), Array(1.0, 0.0, 1.0)))
@@ -44,6 +49,7 @@ class MipCoverCutsSuite extends AnyFunSuite {
     val lo = Array(0.0, 0.0)
     val hi = Array(1.0, 1.0)
     val values = Map(0L -> 1.0, 1L -> 1.0)
+
     assert(MipCoverCuts.generate(cols, Array(2.0 - 1e-12), lo, hi, Set.empty, values, true, enabled, Set.empty, 10).isEmpty)
     assert(MipCoverCuts.generate(cols, Array(1.5), lo, hi, Set(0), values, true, enabled, Set.empty, 10).isEmpty)
     assert(MipCoverCuts.generate(cols, Array(1.5), lo, hi, Set.empty, values, true, enabled, Set.empty, 0).isEmpty)
@@ -70,6 +76,7 @@ class MipCoverCutsSuite extends AnyFunSuite {
           assert(cuts.forall(cut => cut.columns.map(g => shifted(g.toInt)).sum <= cut.rhs))
       }
     }
+
     assert(accepted > 0)
   }
 

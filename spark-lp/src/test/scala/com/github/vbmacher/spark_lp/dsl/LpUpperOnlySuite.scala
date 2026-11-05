@@ -14,6 +14,7 @@ class LpUpperOnlySuite extends AnyFunSuite with DataFrameSuiteBase {
       val model = LpProblem("upper", sense)
       val x = model.variable("x", lowerBound = Double.NegativeInfinity, upperBound = Some(upper))
       model += sign * x + 7.0
+
       val result = model.solve()
       try {
         assert(result.status == LpStatus.Optimal)
@@ -34,14 +35,17 @@ class LpUpperOnlySuite extends AnyFunSuite with DataFrameSuiteBase {
       model += xs.sum + 4.0
       model += (xs.sum >= 0.0)
       if (!reflect) model += (xs.sumBy("id")() <= 3.0)
+
       val result = model.solve(SolveConfig(newtonSolver = NewtonSolver.ConjugateGradient))
       try {
         assert(result.status == LpStatus.Optimal)
         val values = result.values(xs).select("lp_value").collect().map(_.getDouble(0))
+
         assert(values.forall(v => math.abs(v - 3.0) < 1e-6))
         result.objectiveValue
       } finally result.close()
     }
+
     assert(math.abs(solve(true) - solve(false)) < 1e-6)
   }
 
@@ -50,6 +54,7 @@ class LpUpperOnlySuite extends AnyFunSuite with DataFrameSuiteBase {
     val model = LpProblem("quadratic")
     val x = model.variable("x", lowerBound = Double.NegativeInfinity, upperBound = Some(-1.0))
     model += QpObjective.squaredDeviation(x, -2.0) + LpExpr.constant(3.0)
+
     val result = model.solve()
     try {
       assert(result.status == LpStatus.Optimal)
@@ -57,6 +62,7 @@ class LpUpperOnlySuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(math.abs(result.objectiveValue - 3.0) < 1e-6)
     } finally result.close()
     model += (x >= 0.0)
+
     val infeasible = model.solve()
     try {
       assert(infeasible.status == LpStatus.Infeasible)
@@ -69,6 +75,7 @@ class LpUpperOnlySuite extends AnyFunSuite with DataFrameSuiteBase {
     val model = LpProblem("unbounded")
     val x = model.variable("x", lowerBound = Double.NegativeInfinity, upperBound = Some(2.0))
     model += x + 4.0
+
     val result = model.solve()
     try {
       assert(result.status == LpStatus.Unbounded)

@@ -17,19 +17,22 @@ class LpModelCopySuite extends AnyFunSuite with DataFrameSuiteBase {
     val y = copied.variable(x)
     copied.model += (y >= 4.0)
     copied.model.setObjective(2.0 * y)
-    val a = original.solve()
-    val b = copied.model.solve()
+
+    val originalSolution = original.solve()
+    val copiedSolution = copied.model.solve()
     try {
-      assert(math.abs(a.objectiveValue - 5.0) < 1e-6)
-      assert(math.abs(b.objectiveValue - 8.0) < 1e-6)
-      intercept[LpModelException](b.value(x))
-      a.close()
-      assert(math.abs(b.value(y) - 4.0) < 1e-6)
+      assert(math.abs(originalSolution.objectiveValue - 5.0) < 1e-6)
+      assert(math.abs(copiedSolution.objectiveValue - 8.0) < 1e-6)
+      intercept[LpModelException](copiedSolution.value(x))
+      // Closing the source result must leave the copied result readable.
+      originalSolution.close()
+
+      assert(math.abs(copiedSolution.value(y) - 4.0) < 1e-6)
       intercept[LpModelException](copied.variable(y))
-    } finally { a.close(); b.close() }
+    } finally { originalSolution.close(); copiedSolution.close() }
   }
 
-  test("composite-key grouped binary models and typed coefficients bind to the copied model") {
+  test("composite-key grouped binary models bind to the copied model") {
     implicit val ss: SparkSession = spark
     val localSpark = spark
     import localSpark.implicits._
@@ -39,20 +42,30 @@ class LpModelCopySuite extends AnyFunSuite with DataFrameSuiteBase {
     model += xs.sum
     model += (xs.sumBy("group")() <= 1.0).named("capacity")
     val copied = model.copy()
+
     val result = copied.model.solve()
     try {
       assert(result.status == LpStatus.Optimal)
       assert(result.objectiveValue == 2.0)
       assert(result.values(copied.variables(xs)).count() == 2)
     } finally result.close()
+  }
+
+  test("copied typed weighted coefficients retain their objective contribution") {
+    implicit val ss: SparkSession = spark
+    val localSpark = spark
+    import localSpark.implicits._
     val typed = LpProblem("typed")
     val input = Seq("a", "b").toDS()
     val amounts = typed.variablesOf("amounts", input, (s: String) => s)
     typed += lpSum(amounts.weightedBy(input)(_ => 2.0))
     typed += (amounts.sum >= 3.0)
-    val tc = typed.copy()
-    val tr = tc.model.solve()
-    try assert(math.abs(tr.objectiveValue - 6.0) < 1e-6) finally tr.close()
+    val typedCopy = typed.copy()
+
+    val typedSolution = typedCopy.model.solve()
+    try {
+      assert(math.abs(typedSolution.objectiveValue - 6.0) < 1e-6)
+    } finally typedSolution.close()
   }
 
   test("quadratic factor copies preserve the complete objective") {
@@ -61,8 +74,12 @@ class LpModelCopySuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x")
     model += QpObjective.squared(x - 2.0)
     val copied = model.copy()
+
     val result = copied.model.solve()
-    try assert(math.abs(result.value(copied.variable(x)) - 2.0) < 1e-5) finally result.close()
+    try {
+      assert(math.abs(result.value(copied.variable(x)) - 2.0) < 1e-5)
+    } finally result.close()
+
     assert(copied.model.handles.size == model.handles.size)
   }
 }
