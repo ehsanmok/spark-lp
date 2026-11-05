@@ -112,4 +112,32 @@ class DMatrixSuite extends AnyFunSuite with DataFrameSuiteBase {
     assert(Vectors.dense(dMatrix.gramianColumns(indices, Some(dW))) ~==
       Vectors.dense(78.0, 12.0, 126.0, 50.0, 4.0, 78.0) absTol 1e-12)
   }
+
+  test("gramianColumns preserves adjacent and nonadjacent repeated requests") {
+    val matrix: DMatrix = sc.parallelize(Seq(
+      Vectors.dense(1.0, 2.0, 3.0),
+      Vectors.sparse(3, Seq(0 -> 4.0, 2 -> 6.0))), 2)
+    val weights: DVector = sc.parallelize(Array(2.0, 3.0), 2).glom.map(new DenseVector(_))
+    val requests = Seq(
+      (Array(0, 0), Array(17.0, 2.0, 27.0, 17.0, 2.0, 27.0),
+        Array(50.0, 4.0, 78.0, 50.0, 4.0, 78.0)),
+      (Array(2, 0, 2), Array(27.0, 6.0, 45.0, 17.0, 2.0, 27.0, 27.0, 6.0, 45.0),
+        Array(78.0, 12.0, 126.0, 50.0, 4.0, 78.0, 78.0, 12.0, 126.0)))
+
+    requests.foreach { case (indices, expected, expectedWeighted) =>
+      val result = matrix.gramianColumns(indices)
+      val weighted = matrix.gramianColumns(indices, Some(weights))
+
+      assert(result.sameElements(expected))
+      assert(weighted.sameElements(expectedWeighted))
+    }
+  }
+
+  test("gramianColumns preserves repeated columns absent from sparse rows") {
+    val matrix: DMatrix = sc.parallelize(Seq(Vectors.sparse(3, Seq(0 -> 2.0, 2 -> 3.0))), 1)
+
+    val result = matrix.gramianColumns(Array(1, 0, 1))
+
+    assert(result.sameElements(Array(0.0, 0.0, 0.0, 4.0, 0.0, 6.0, 0.0, 0.0, 0.0)))
+  }
 }
