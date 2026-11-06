@@ -161,7 +161,7 @@ object LpEvidenceVerifier {
           math.abs(upper) * v.upper.map(boundScale).getOrElse(1.0))
       }
         .fold(0.0)(math.max))
-    val terms = joined.map { case (_, (v, (lower, upper))) =>
+    val (boundError, boundMargin, relativeBoundError, boundMarginScale) = joined.map { case (_, (v, (lower, upper))) =>
       val ay = v.coefficients.iterator.map { case (r, a) => a * y(r) }.sum
       val sign = math.max(checked(-lower), checked(upper))
       val absent = math.max(if (v.lower.isNegInfinity) math.abs(lower) else 0.0,
@@ -183,8 +183,8 @@ object LpEvidenceVerifier {
     }.fold((0.0, 0.0, 0.0, 0.0)) { case ((e, m, r, s), (f, n, t, u)) =>
       (math.max(e, f), m + n, math.max(r, t), s + u)
     }
-    val margin = terms._2 + model.rows.zip(y).map { case (r, v) => r.rhs * v }.sum
-    val residual = math.max(math.max(rowError, terms._1), checked(math.abs(margin - 1.0)))
+    val margin = boundMargin + model.rows.zip(y).map { case (r, v) => r.rhs * v }.sum
+    val residual = math.max(math.max(rowError, boundError), checked(math.abs(margin - 1.0)))
     val relativeRowError = model.rows.zipWithIndex.map { case (r, i) =>
       val error = r.sense match {
         case "<=" => checked(y(i))
@@ -193,8 +193,8 @@ object LpEvidenceVerifier {
       }
       Numerics.relativeResidual(error * rowScales(i), multiplierNorm)
     }.foldLeft(0.0)(math.max)
-    val relativeError = math.max(terms._3, relativeRowError)
-    val rhsScale = terms._4 + model.rows.zip(rowScales).map { case (r, scale) => math.abs(r.rhs) / scale }.sum
+    val relativeError = math.max(relativeBoundError, relativeRowError)
+    val rhsScale = boundMarginScale + model.rows.zip(rowScales).map { case (r, scale) => math.abs(r.rhs) / scale }.sum
     val separation = Numerics.relativeResidual(margin, rhsScale * multiplierNorm)
     EvidenceVerification(residual <= tolerance && relativeError <= tolerance &&
       Numerics.isFinite(separation) && separation > tolerance && margin > tolerance, residual, margin)
@@ -210,7 +210,7 @@ object LpEvidenceVerifier {
       val joined = model.variables.join(values)
       val directionNorm = if (ray) joined.values.map { case (v, x) => math.abs(x) * columnScale(v) }
         .fold(0.0)(math.max) else 1.0
-      val scalar = joined.map { case (_, (v, x)) =>
+      val (variableError, objectiveValue, relativeVariableError, costNorm) = joined.map { case (_, (v, x)) =>
         val scale = if (ray) columnScale(v) else 1.0
         val lo = if (v.lower.isNegInfinity) 0.0 else (if (ray) -x else v.lower - x)
         val hi = v.upper.map(u => if (ray) x else x - u).getOrElse(0.0)
@@ -227,22 +227,25 @@ object LpEvidenceVerifier {
         val scale = if (ray) columnScale(v) else 1.0
         v.coefficients.map { case (r, a) => (r, (a * x, math.abs(a) / scale)) }
       }.reduceByKey { case ((a, b), (c, d)) => (a + c, b + d) }.collectAsMap()
-      val rowErrors = model.rows.zipWithIndex.map { case (r, i) =>
+      val (rowError, relativeRowError) = model.rows.zipWithIndex.map { case (r, i) =>
         val (activity, scale) = activities.getOrElse(i, (0.0, 0.0))
         val d = activity - (if (ray) 0.0 else r.rhs)
         val error = checked(LpSense.violation(r.sense, d))
         (error, if (ray) Numerics.relativeResidual(error, scale * directionNorm) else 0.0)
       }.foldLeft((0.0, 0.0)) { case ((a, b), (c, d)) => (math.max(a, c), math.max(b, d)) }
-      (math.max(scalar._1, rowErrors._1), scalar._2, math.max(scalar._3, rowErrors._2),
-        scalar._4 * directionNorm)
+      (math.max(variableError, rowError), objectiveValue, math.max(relativeVariableError, relativeRowError),
+        costNorm * directionNorm)
     }
 
-    val ray = violations(proof.direction, ray = true)
-    val margin = (if (model.sense == Minimize) -1.0 else 1.0) * ray._2
-    val pointError = proof.point.map(violations(_, ray = false)._1).getOrElse(Double.PositiveInfinity)
-    val residual = math.max(math.max(ray._1, pointError), checked(math.abs(margin - 1.0)))
-    val separation = Numerics.relativeResidual(margin, ray._4)
-    EvidenceVerification(residual <= tolerance && ray._3 <= tolerance &&
+    val (rayError, rayObjective, relativeRayError, separationScale) = violations(proof.direction, ray = true)
+    val margin = (if (model.sense == Minimize) -1.0 else 1.0) * rayObjective
+    val pointError = proof.point.map { point =>
+      val (error, _, _, _) = violations(point, ray = false)
+      error
+    }.getOrElse(Double.PositiveInfinity)
+    val residual = math.max(math.max(rayError, pointError), checked(math.abs(margin - 1.0)))
+    val separation = Numerics.relativeResidual(margin, separationScale)
+    EvidenceVerification(residual <= tolerance && relativeRayError <= tolerance &&
       Numerics.isFinite(separation) && separation > tolerance && margin > tolerance, residual, margin)
   }
 }
