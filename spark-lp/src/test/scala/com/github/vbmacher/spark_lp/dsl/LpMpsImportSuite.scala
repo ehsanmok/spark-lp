@@ -173,22 +173,31 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
 
   test("explicit lower bounds override negative-upper defaults independently of record order") {
     implicit val ss: SparkSession = spark
-    for (lowerType <- Seq("LO", "LI"); lower <- Seq(-4.0, 0.0); lowerFirst <- Seq(true, false)) {
-      val records = Seq(s"$lowerType bounds x $lower", "UP bounds x -1")
+    for (lowerType <- Seq("LO", "LI"); lowerFirst <- Seq(true, false)) {
+      val records = Seq(s"$lowerType bounds x -4", "UP bounds x -1")
       val ordered = if (lowerFirst) records else records.reverse
       val text = s"NAME EXPLICIT_LOWER\nROWS\n N OBJ\nCOLUMNS\n x OBJ 1\nBOUNDS\n ${ordered.mkString("\n ")}\nENDATA\n"
 
       fixture(text) { path =>
-        if (lower == 0.0) {
-          val error = intercept[LpModelException](LpMpsImport.read(path))
+        val declaration = LpMpsImport.read(path).model.inspect.variableDeclarations.head
 
-          assert(error.getMessage.contains("Inconsistent bounds for 'x'"))
-        } else {
-          val declaration = LpMpsImport.read(path).model.inspect.variableDeclarations.head
+        assert(declaration.lower == -4.0 && declaration.upper.contains(-1.0))
+        assert(declaration.category == (if (lowerType == "LI") Integer else Continuous))
+      }
+    }
+  }
 
-          assert(declaration.lower == -4.0 && declaration.upper.contains(-1.0))
-          assert(declaration.category == (if (lowerType == "LI") Integer else Continuous))
-        }
+  test("explicit lower bounds inconsistent with negative upper bounds are rejected independently of record order") {
+    implicit val ss: SparkSession = spark
+    for (lowerType <- Seq("LO", "LI"); lowerFirst <- Seq(true, false)) {
+      val records = Seq(s"$lowerType bounds x 0", "UP bounds x -1")
+      val ordered = if (lowerFirst) records else records.reverse
+      val text = s"NAME INCONSISTENT_LOWER\nROWS\n N OBJ\nCOLUMNS\n x OBJ 1\nBOUNDS\n ${ordered.mkString("\n ")}\nENDATA\n"
+
+      fixture(text) { path =>
+        val error = intercept[LpModelException](LpMpsImport.read(path))
+
+        assert(error.getMessage.contains("Inconsistent bounds for 'x'"))
       }
     }
   }
