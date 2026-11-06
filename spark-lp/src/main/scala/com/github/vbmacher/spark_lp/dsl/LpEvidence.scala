@@ -53,7 +53,7 @@ final case class EvidenceModel(
 /**
   * Result of checking certificate equations against an evidence model.
   *
-  * @param valid true when every checked equation and sign condition is within tolerance.
+  * @param valid true when absolute and scale-aware equation, sign and separation checks pass.
   * @param residual largest absolute violation encountered while checking the certificate.
   * @param margin normalized certificate margin; one is required for infeasibility and a positive
   *               improvement is required for an unbounded direction.
@@ -116,10 +116,19 @@ final case class UnboundedDirection(
 }
 
 /** Checks original coefficients, bounds and objective, without trusting solver residuals/status.
-  * `valid` is a numerical witness at the requested absolute tolerance, not an exact-arithmetic proof.
+  * `valid` checks both absolute and homogeneous residuals at the requested tolerance;
+  * it is a numerical witness, not an exact-arithmetic proof.
   */
 object LpEvidenceVerifier {
   private def checked(v: Double): Double = if (Numerics.isFinite(v)) math.max(0.0, v) else Double.PositiveInfinity
+
+  private def boundScale(bound: Double): Double = math.max(1.0, math.abs(bound))
+
+  private def columnScale(variable: EvidenceVariable): Double = {
+    val scale = math.max(math.abs(variable.cost), math.max(variable.coefficients.values.map(math.abs).sum,
+      if (!variable.lower.isNegInfinity || variable.upper.nonEmpty) 1.0 else 0.0))
+    if (scale == 0.0) 1.0 else scale
+  }
 
   private def checkTolerance(t: Double): Unit = require(Numerics.isFinite(t) && t > 0, "tolerance must be finite and positive")
 
@@ -132,6 +141,12 @@ object LpEvidenceVerifier {
     val y = proof.rows
     if (y.size != model.rows.size || !y.forall(Numerics.isFinite) || !keysMatch(model.variables, proof.bounds))
       return EvidenceVerification(false, Double.PositiveInfinity, Double.NaN)
+    val rowNorms = model.variables.values.flatMap(_.coefficients.map { case (r, a) => r -> math.abs(a) })
+      .reduceByKey(_ + _).collectAsMap()
+    val rowScales = model.rows.zipWithIndex.map { case (r, i) =>
+      val scale = math.max(math.abs(r.rhs), rowNorms.getOrElse(i, 0.0))
+      if (scale == 0.0) 1.0 else scale
+    }
     val rowError = model.rows.zip(y).map { case (r, v) =>
       r.sense match {
         case "<=" => checked(v);
@@ -139,49 +154,98 @@ object LpEvidenceVerifier {
         case _ => 0.0
       }
     }.foldLeft(0.0)(math.max)
-    val terms = model.variables.join(proof.bounds).map { case (_, (v, (lower, upper))) =>
+    val joined = model.variables.join(proof.bounds)
+    val multiplierNorm = math.max(y.zip(rowScales).map { case (v, scale) => math.abs(v) * scale }.foldLeft(0.0)(math.max),
+      joined.values.map { case (v, (lower, upper)) =>
+        math.max(math.abs(lower) * (if (v.lower.isNegInfinity) 1.0 else boundScale(v.lower)),
+          math.abs(upper) * v.upper.map(boundScale).getOrElse(1.0))
+      }
+        .fold(0.0)(math.max))
+    val (boundError, boundMargin, relativeBoundError, boundMarginScale) = joined.map { case (_, (v, (lower, upper))) =>
       val ay = v.coefficients.iterator.map { case (r, a) => a * y(r) }.sum
       val sign = math.max(checked(-lower), checked(upper))
       val absent = math.max(if (v.lower.isNegInfinity) math.abs(lower) else 0.0,
         if (v.upper.isEmpty) math.abs(upper) else 0.0)
-      val err = Seq(sign, absent, math.abs(ay + lower + upper)).map(checked).max
+      val stationarity = math.abs(ay + lower + upper)
+      val err = Seq(sign, absent, stationarity).map(checked).max
+      val loScale = if (v.lower.isNegInfinity) 1.0 else boundScale(v.lower)
+      val hiScale = v.upper.map(boundScale).getOrElse(1.0)
+      val stationarityScale = v.coefficients.map { case (r, a) => math.abs(a) / rowScales(r) }.sum *
+        multiplierNorm + math.abs(lower) + math.abs(upper)
+      val relativeSigns = Seq(checked(-lower) * loScale, checked(upper) * hiScale, absent).max
+      val relativeError = math.max(Numerics.relativeResidual(relativeSigns, multiplierNorm),
+        Numerics.relativeResidual(stationarity, stationarityScale))
       val margin = (if (v.lower.isNegInfinity) 0.0 else lower * v.lower) +
         v.upper.map(_ * upper).getOrElse(0.0)
-      (err, margin)
-    }.fold((0.0, 0.0)) { case ((e, m), (f, n)) => (math.max(e, f), m + n) }
-    val margin = terms._2 + model.rows.zip(y).map { case (r, v) => r.rhs * v }.sum
-    val residual = math.max(math.max(rowError, terms._1), checked(math.abs(margin - 1.0)))
-    EvidenceVerification(residual <= tolerance && margin > tolerance, residual, margin)
+      val boundMarginScale = (if (v.lower.isNegInfinity) 0.0 else math.abs(v.lower) / loScale) +
+        v.upper.map(u => math.abs(u) / hiScale).getOrElse(0.0)
+      (err, margin, relativeError, boundMarginScale)
+    }.fold((0.0, 0.0, 0.0, 0.0)) { case ((e, m, r, s), (f, n, t, u)) =>
+      (math.max(e, f), m + n, math.max(r, t), s + u)
+    }
+    val margin = boundMargin + model.rows.zip(y).map { case (r, v) => r.rhs * v }.sum
+    val residual = math.max(math.max(rowError, boundError), checked(math.abs(margin - 1.0)))
+    val relativeRowError = model.rows.zipWithIndex.map { case (r, i) =>
+      val error = r.sense match {
+        case "<=" => checked(y(i))
+        case ">=" => checked(-y(i))
+        case _ => 0.0
+      }
+      Numerics.relativeResidual(error * rowScales(i), multiplierNorm)
+    }.foldLeft(0.0)(math.max)
+    val relativeError = math.max(relativeBoundError, relativeRowError)
+    val rhsScale = boundMarginScale + model.rows.zip(rowScales).map { case (r, scale) => math.abs(r.rhs) / scale }.sum
+    val separation = Numerics.relativeResidual(margin, rhsScale * multiplierNorm)
+    EvidenceVerification(residual <= tolerance && relativeError <= tolerance &&
+      Numerics.isFinite(separation) && separation > tolerance && margin > tolerance, residual, margin)
   }
 
   def unbounded(proof: UnboundedDirection, tolerance: Double = 1e-8): EvidenceVerification = {
     checkTolerance(tolerance)
     val model = proof.model
 
-    def violations(values: RDD[((Int, String), Double)], ray: Boolean): (Double, Double) = {
-      if (!keysMatch(model.variables, values)) return (Double.PositiveInfinity, Double.NaN)
+    def violations(values: RDD[((Int, String), Double)], ray: Boolean): (Double, Double, Double, Double) = {
+      if (!keysMatch(model.variables, values))
+        return (Double.PositiveInfinity, Double.NaN, Double.PositiveInfinity, Double.PositiveInfinity)
       val joined = model.variables.join(values)
-      val scalar = joined.map { case (_, (v, x)) =>
+      val directionNorm = if (ray) joined.values.map { case (v, x) => math.abs(x) * columnScale(v) }
+        .fold(0.0)(math.max) else 1.0
+      val (variableError, objectiveValue, relativeVariableError, costNorm) = joined.map { case (_, (v, x)) =>
+        val scale = if (ray) columnScale(v) else 1.0
         val lo = if (v.lower.isNegInfinity) 0.0 else (if (ray) -x else v.lower - x)
         val hi = v.upper.map(u => if (ray) x else x - u).getOrElse(0.0)
         val curvatureError = if (ray) checked(math.abs(v.curvature * x)) else 0.0
+        val relativeError = if (ray) math.max(
+          Numerics.relativeResidual(math.max(checked(lo), checked(hi)) * scale, directionNorm),
+          if (v.curvature > 0.0) Numerics.relativeResidual(math.abs(x) * scale, directionNorm) else 0.0) else 0.0
         (if (Numerics.isFinite(x)) math.max(curvatureError, math.max(checked(lo), checked(hi)))
-        else Double.PositiveInfinity, v.cost * x)
-      }.fold((0.0, 0.0)) { case ((a, b), (c, d)) => (math.max(a, c), b + d) }
+        else Double.PositiveInfinity, v.cost * x, relativeError, math.abs(v.cost) / scale)
+      }.fold((0.0, 0.0, 0.0, 0.0)) { case ((a, b, e, f), (c, d, g, h)) =>
+        (math.max(a, c), b + d, math.max(e, g), f + h)
+      }
       val activities = joined.flatMap { case (_, (v, x)) =>
-        v.coefficients.map { case (r, a) => (r, a * x) }
-      }.reduceByKey(_ + _).collectAsMap()
-      val rowError = model.rows.zipWithIndex.map { case (r, i) =>
-        val d = activities.getOrElse(i, 0.0) - (if (ray) 0.0 else r.rhs)
-        checked(LpSense.violation(r.sense, d))
-      }.foldLeft(0.0)(math.max)
-      (math.max(scalar._1, rowError), scalar._2)
+        val scale = if (ray) columnScale(v) else 1.0
+        v.coefficients.map { case (r, a) => (r, (a * x, math.abs(a) / scale)) }
+      }.reduceByKey { case ((a, b), (c, d)) => (a + c, b + d) }.collectAsMap()
+      val (rowError, relativeRowError) = model.rows.zipWithIndex.map { case (r, i) =>
+        val (activity, scale) = activities.getOrElse(i, (0.0, 0.0))
+        val d = activity - (if (ray) 0.0 else r.rhs)
+        val error = checked(LpSense.violation(r.sense, d))
+        (error, if (ray) Numerics.relativeResidual(error, scale * directionNorm) else 0.0)
+      }.foldLeft((0.0, 0.0)) { case ((a, b), (c, d)) => (math.max(a, c), math.max(b, d)) }
+      (math.max(variableError, rowError), objectiveValue, math.max(relativeVariableError, relativeRowError),
+        costNorm * directionNorm)
     }
 
-    val ray = violations(proof.direction, ray = true)
-    val margin = (if (model.sense == Minimize) -1.0 else 1.0) * ray._2
-    val pointError = proof.point.map(violations(_, ray = false)._1).getOrElse(Double.PositiveInfinity)
-    val residual = math.max(math.max(ray._1, pointError), checked(math.abs(margin - 1.0)))
-    EvidenceVerification(residual <= tolerance && margin > tolerance, residual, margin)
+    val (rayError, rayObjective, relativeRayError, separationScale) = violations(proof.direction, ray = true)
+    val margin = (if (model.sense == Minimize) -1.0 else 1.0) * rayObjective
+    val pointError = proof.point.map { point =>
+      val (error, _, _, _) = violations(point, ray = false)
+      error
+    }.getOrElse(Double.PositiveInfinity)
+    val residual = math.max(math.max(rayError, pointError), checked(math.abs(margin - 1.0)))
+    val separation = Numerics.relativeResidual(margin, separationScale)
+    EvidenceVerification(residual <= tolerance && relativeRayError <= tolerance &&
+      Numerics.isFinite(separation) && separation > tolerance && margin > tolerance, residual, margin)
   }
 }

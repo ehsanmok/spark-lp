@@ -4,14 +4,16 @@ package org.apache.spark.wrappers
   * Vector kernels use netlib BLAS; no dense matrix is formed. Inputs are copied.
   * The operator and preconditioner must leave their input unchanged and return a
   * vector of the same length. Calls are synchronous; they must not retain inputs.
-  * This mutable solver is driver-local and is not thread-safe.
+  * Optional component tolerances replace the norm threshold for convergence; reported norms
+  * remain Euclidean. This mutable solver is driver-local and is not thread-safe.
   */
 final class ConjugateGradient(
   rhs: Array[Double],
   operator: Array[Double] => Array[Double],
   relativeTolerance: Double,
   absoluteTolerance: Double = 0.0,
-  initialGuess: Option[Array[Double]] = None) {
+  initialGuess: Option[Array[Double]] = None,
+  componentTolerances: Option[Array[Double]] = None) {
 
   require(relativeTolerance > 0.0 && !relativeTolerance.isInfinite,
     "CG tolerance must be finite and positive")
@@ -20,10 +22,13 @@ final class ConjugateGradient(
   require(rhs.forall(v => !v.isNaN && !v.isInfinite), "CG right-hand side must be finite")
   require(initialGuess.forall(x => x.length == rhs.length && x.forall(v => !v.isNaN && !v.isInfinite)),
     "CG initial guess must be finite and match the right-hand side")
+  require(componentTolerances.forall(t => t.length == rhs.length && t.forall(v => v > 0.0 && !v.isInfinite)),
+    "CG component tolerances must be finite, positive and match the right-hand side")
 
   private val blas = NativeNetlib.blas
   private val n = rhs.length
   private val b = rhs.clone()
+  private val residualTolerances = componentTolerances.map(_.clone())
   val rhsNorm: Double = blas.dnrm2(n, b, 1)
   val targetNorm: Double = math.max(relativeTolerance * rhsNorm, absoluteTolerance)
   private val x = if (rhsNorm == 0.0) new Array[Double](n)
@@ -35,7 +40,10 @@ final class ConjugateGradient(
 
   def solution: Array[Double] = x.clone()
   def residualNorm: Double = residual
-  def converged: Boolean = residual <= targetNorm
+  def converged: Boolean = residualTolerances match {
+    case Some(targets) => r.indices.forall(i => math.abs(r(i)) <= targets(i))
+    case None => residual <= targetNorm
+  }
   def iterations: Int = totalSteps
   def restarts: Int = math.max(0, cycles - 1)
 
@@ -87,7 +95,10 @@ final class ConjugateGradient(
         if (checkTrueResidual(totalSteps) && !finished) {
           val actual = trueResidual()
           val actualNorm = blas.dnrm2(n, actual, 1)
-          finished = actualNorm <= targetNorm
+          finished = residualTolerances match {
+            case Some(targets) => actual.indices.forall(i => math.abs(actual(i)) <= targets(i))
+            case None => actualNorm <= targetNorm
+          }
           if (finished) { r = actual; residual = actualNorm }
           reportResidual(true, actualNorm)
         }

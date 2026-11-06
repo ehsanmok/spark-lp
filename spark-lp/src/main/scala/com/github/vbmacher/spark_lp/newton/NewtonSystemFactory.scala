@@ -20,10 +20,10 @@ private[spark_lp] trait NewtonSystemFactory {
     */
   def build(B: DMatrix, m: Int, weights: Option[Weights]): NewtonSystem
 
-  /** Primal regularization `Rp` (a diagonal entry) folded into the operator; `0.0` when unregularized. */
+  /** Maximum primal regularization `Rp` folded into the operator; `0.0` when unregularized. */
   def primalRegularization: Double = 0.0
 
-  /** Dual regularization `Rd` (a diagonal entry) added to the Gramian diagonal; `0.0` when unregularized. */
+  /** Maximum dual regularization `Rd` added to the Gramian diagonal; `0.0` when unregularized. */
   def dualRegularization: Double = 0.0
 
   /** Total inner-solver iterations across every system built (e.g. CG steps); `0` for direct solvers. */
