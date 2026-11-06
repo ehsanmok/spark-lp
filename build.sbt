@@ -57,6 +57,8 @@ lazy val `spark-lp` = sparkAxes.foldLeft(projectMatrix
           scalacOptions ++= Seq("-target:jvm-1.8", "-Xlint:_", "-language:experimental.macros", "-feature"),
           javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint"),
           javaOptions ++= forkedJvmOptions,
+          // Tiny fixtures need multiple partitions, but not one task per host core or 200 shuffle tasks.
+          Test / javaOptions ++= Seq("-Dspark.default.parallelism=2", "-Dspark.sql.shuffle.partitions=2"),
           fork := true,
           assembly / assemblyMergeStrategy := sparkLpAssemblyMergeStrategy,
           libraryDependencies ++= Libs.scalaTestLibs ++ Seq(
