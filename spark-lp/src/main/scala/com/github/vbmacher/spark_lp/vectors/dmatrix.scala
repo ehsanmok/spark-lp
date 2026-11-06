@@ -215,7 +215,7 @@ object dmatrix {
         * the `s`th requested column. A supplied `w` must align with the matrix rows as described by
         * [[adjointProduct]]. Driver and per-partition memory are `O(n * indices.length)`.
         *
-        * @param indices Gram-matrix column indices, in requested output order.
+        * @param indices Gram-matrix column indices, in requested output order; repetitions are preserved.
         * @param w optional row weights; `None` uses a weight of one for every row.
         * @param depth depth of Spark's tree aggregation.
         */
@@ -238,7 +238,12 @@ object dmatrix {
           }
         }
 
-        weightedRowAccumulate(w, n * k, depth)(accumulate)
+        val result = weightedRowAccumulate(w, n * k, depth)(accumulate)
+        indices.zipWithIndex.foreach { case (column, s) =>
+          val source = slots(column)
+          if (source != s) Array.copy(result, source * n, result, s * n, n)
+        }
+        result
       }
     }
   }
