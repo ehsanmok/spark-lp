@@ -14,15 +14,19 @@ class LpRelaxationSuite extends AnyFunSuite with DataFrameSuiteBase {
     val y = model.variable("y", category = Binary)
     model += x + y + 3.0
     model += (2.0 * x + 2.0 * y <= 3.0)
+
     val relaxed = model.solve(SolveConfig(relaxIntegrality = true))
     val integral = model.solve()
     try {
-      assert(relaxed.isRelaxation && !integral.isRelaxation)
-      assert(relaxed.status == LpStatus.Optimal && integral.status == LpStatus.Optimal)
+      assert(relaxed.isRelaxation)
+      assert(!integral.isRelaxation)
+      assert(relaxed.status == LpStatus.Optimal)
+      assert(integral.status == LpStatus.Optimal)
       assert(math.abs(relaxed.objectiveValue - 4.5) < 1e-6)
       assert(integral.objectiveValue == 4.0)
       assert(math.abs(relaxed.value(x) + relaxed.value(y) - 1.5) < 1e-6)
-      assert(x.handle.category == Binary && x.handle.upperBound.isEmpty)
+      assert(x.handle.category == Binary)
+      assert(x.handle.upperBound.isEmpty)
     } finally { relaxed.close(); integral.close() }
   }
 
@@ -34,14 +38,21 @@ class LpRelaxationSuite extends AnyFunSuite with DataFrameSuiteBase {
     val y = model.variable("y", lowerBound = 0.2)
     model += x + b + y
     model += (x + y >= 1.0)
+
     val result = model.solve(SolveConfig(relaxIntegrality = true))
     try {
-      assert(result.isRelaxation && result.status == LpStatus.Optimal)
+      assert(result.isRelaxation)
+      assert(result.status == LpStatus.Optimal)
       assert(math.abs(result.objectiveValue - 2.2) < 1e-6)
-      assert(math.abs(result.value(x) - 1.0) < 1e-6 && result.value(b) == 1.0)
+      assert(math.abs(result.value(x) - 1.0) < 1e-6)
+      assert(result.value(b) == 1.0)
     } finally result.close()
+
     val stopped = model.solve(SolveConfig(relaxIntegrality = true,
       control = SolveControl(shouldStop = () => true)))
-    try assert(stopped.isRelaxation && !stopped.candidate.available) finally stopped.close()
+    try {
+      assert(stopped.isRelaxation)
+      assert(!stopped.candidate.available)
+    } finally stopped.close()
   }
 }

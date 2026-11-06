@@ -31,7 +31,9 @@ class LpMpsSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       val integer = HighsInterop.inspect(mip)
       val relaxed = HighsInterop.inspect(relaxation)
-      assert(integer.get("columns").asInt() == 5 && integer.get("rows").asInt() == 3)
+
+      assert(integer.get("columns").asInt() == 5)
+      assert(integer.get("rows").asInt() == 3)
       assert(integer.get("offset").asDouble() == 9.0)
       assert(math.abs(integer.get("objective").asDouble() - 11.0) < 1e-8)
       assert(math.abs(relaxed.get("objective").asDouble() - 12.0) < 1e-8)

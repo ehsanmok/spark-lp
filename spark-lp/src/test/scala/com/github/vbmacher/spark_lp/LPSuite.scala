@@ -12,49 +12,69 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class LPSuite extends AnyFunSuite with DataFrameSuiteBase {
 
-  val numPartitions = 2
-  val cArray: Array[Double] = Array(2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0)
-  val BArray: Array[Array[Double]] = Array(
-    Array(12.0, 16.0, 30.0, 1.0, 0.0),
-    Array(24.0, 16.0, 12.0, 0.0, 1.0),
-    Array(-1.0, 0.0, 0.0, 0.0, 0.0),
-    Array(0.0, -1.0, 0.0, 0.0, 0.0),
-    Array(0.0, 0.0, -1.0, 0.0, 0.0),
-    Array(0.0, 0.0, 0.0, 1.0, 0.0),
-    Array(0.0, 0.0, 0.0, 0.0, 1.0))
-  val bArray: Array[Double] = Array(120.0, 120.0, 120.0, 15.0, 15.0)
+  private val numPartitions = 2
 
-  lazy val c: RDD[DenseVector] = sc.parallelize(cArray, numPartitions).glom.map(new DenseVector(_))
-  lazy val rows: RDD[org.apache.spark.mllib.linalg.Vector] = sc.parallelize(BArray, numPartitions).map(Vectors.dense)
-  lazy val b = new DenseVector(bArray)
-
-  test("LP solve is implemented properly") {
+  test("direct LP solving recovers the reference allocation") {
     implicit val s: SparkSession = spark
+    val cArray: Array[Double] = Array(2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0)
+    val BArray: Array[Array[Double]] = Array(
+      Array(12.0, 16.0, 30.0, 1.0, 0.0),
+      Array(24.0, 16.0, 12.0, 0.0, 1.0),
+      Array(-1.0, 0.0, 0.0, 0.0, 0.0),
+      Array(0.0, -1.0, 0.0, 0.0, 0.0),
+      Array(0.0, 0.0, -1.0, 0.0, 0.0),
+      Array(0.0, 0.0, 0.0, 1.0, 0.0),
+      Array(0.0, 0.0, 0.0, 0.0, 1.0))
+    val bArray: Array[Double] = Array(120.0, 120.0, 120.0, 15.0, 15.0)
 
-    val (v, x) = LP.solve(c, rows, b)
+    val c: RDD[DenseVector] = sc.parallelize(cArray, numPartitions).glom.map(new DenseVector(_))
+    val rows: RDD[org.apache.spark.mllib.linalg.Vector] = sc.parallelize(BArray, numPartitions).map(Vectors.dense)
+    val b = new DenseVector(bArray)
+
+    val (_, allocation) = LP.solve(c, rows, b)
     // solution obtained from scipy.optimize.linprog and octave glgk lpsolver with fun_val = 12.083
     val expectedSol = Vectors.dense(
       Array(1.66666667, 5.83333333, 40.0, 0.0, 0.0, 13.33333333, 9.16666667))
-    val xx = Vectors.dense(x.flatMap(_.toArray).collect())
-    println(s"$xx")
-    println("optimal min value: " + v)
-    assert(xx ~== expectedSol absTol 1e-6, "LP.solve x should return the correct answer.")
+    val actualAllocation = Vectors.dense(allocation.flatMap(_.toArray).collect())
+
+    assert(actualAllocation ~== expectedSol absTol 1e-6, "LP.solve x should return the correct answer.")
   }
 
   test("LP solve with the matrix-free conjugate-gradient solver matches the direct solver") {
     implicit val s: SparkSession = spark
+    val cArray: Array[Double] = Array(2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0)
+    val BArray: Array[Array[Double]] = Array(
+      Array(12.0, 16.0, 30.0, 1.0, 0.0),
+      Array(24.0, 16.0, 12.0, 0.0, 1.0),
+      Array(-1.0, 0.0, 0.0, 0.0, 0.0),
+      Array(0.0, -1.0, 0.0, 0.0, 0.0),
+      Array(0.0, 0.0, -1.0, 0.0, 0.0),
+      Array(0.0, 0.0, 0.0, 1.0, 0.0),
+      Array(0.0, 0.0, 0.0, 0.0, 1.0))
+    val bArray: Array[Double] = Array(120.0, 120.0, 120.0, 15.0, 15.0)
 
-    val (v, x) = LP.solve(c, rows, b, solver = NewtonSolver.ConjugateGradient)
+    val c: RDD[DenseVector] = sc.parallelize(cArray, numPartitions).glom.map(new DenseVector(_))
+    val rows: RDD[org.apache.spark.mllib.linalg.Vector] = sc.parallelize(BArray, numPartitions).map(Vectors.dense)
+    val b = new DenseVector(bArray)
+
+    val (objective, allocation) = LP.solve(c, rows, b, solver = NewtonSolver.ConjugateGradient)
     val expectedSol = Vectors.dense(
       Array(1.66666667, 5.83333333, 40.0, 0.0, 0.0, 13.33333333, 9.16666667))
-    val xx = Vectors.dense(x.flatMap(_.toArray).collect())
-    assert(xx ~== expectedSol absTol 1e-6, "matrix-free LP.solve x should return the correct answer.")
-    assert(v ~== 12.083333333 absTol 1e-6, "matrix-free LP.solve should reach the same optimum.")
+    val actualAllocation = Vectors.dense(allocation.flatMap(_.toArray).collect())
+
+    assert(actualAllocation ~== expectedSol absTol 1e-6, "matrix-free LP.solve x should return the correct answer.")
+    assert(objective ~== 12.083333333 absTol 1e-6, "matrix-free LP.solve should reach the same optimum.")
   }
 
   test("automatic CG preconditioner rank obeys its storage budget") {
-    assert(newton.CgFactory.autoMaxRank(1000000) == 8)
-    assert(newton.CgFactory.autoMaxRank(10000000) == 0)
+    val millionRows = 1000000
+    val tenMillionRows = 10000000
+
+    val rankWithStorage = newton.CgFactory.autoMaxRank(millionRows)
+    val rankWithoutStorage = newton.CgFactory.autoMaxRank(tenMillionRows)
+
+    assert(rankWithStorage == 8)
+    assert(rankWithoutStorage == 0)
   }
 
   test("capped normal-equations weights keep D squared equal to D2") {
@@ -83,11 +103,11 @@ class LPSuite extends AnyFunSuite with DataFrameSuiteBase {
   }
 
   test("full Cholesky identifies a non-positive-definite leading minor") {
-    val e = intercept[IllegalArgumentException](
+    val error = intercept[IllegalArgumentException](
       CholeskyDecomposition.factor(Array(1.0, 0.0, -1.0), 2))
 
-    assert(e.getMessage.contains("not positive definite"))
-    assert(e.getMessage.contains("leading minor 2"))
+    assert(error.getMessage.contains("not positive definite"))
+    assert(error.getMessage.contains("leading minor 2"))
   }
 
   test("core Auto resolves from the known equality-form row count") {
@@ -107,16 +127,20 @@ class LPSuite extends AnyFunSuite with DataFrameSuiteBase {
     val bInf = new DenseVector(Array(1.0, 2.0))
 
     val summary = LP.solveSummary(cInf, atInf, bInf)
+
     assert(summary.termination == LP.Termination.PrimalInfeasible)
     assert(summary.certificateResidual <= 1e-8)
 
     // the same certificate must be found by the matrix-free solver
+
     val cgSummary = LP.solveSummary(cInf, atInf, bInf, solver = NewtonSolver.ConjugateGradient)
+
     assert(cgSummary.termination == LP.Termination.PrimalInfeasible)
     assert(cgSummary.certificateResidual <= 1e-8)
 
     // the normalized ray y satisfies its Farkas inequalities: b^T y = 1, A^T y <= eps componentwise
     val y = summary.primalCertificate.get.toArray
+
     assert(math.abs(1.0 * y(0) + 2.0 * y(1) - 1.0) < 1e-9, "certificate is normalized to b^T y = 1")
     val aTy = Seq(y(0) + y(1), y(0), -y(1)) // columns x, s1, s2
     aTy.foreach(v => assert(v <= 1e-8, s"A^T y must be <= tolerance componentwise, got $aTy"))
@@ -130,12 +154,14 @@ class LPSuite extends AnyFunSuite with DataFrameSuiteBase {
     val bUnb = new DenseVector(Array(1.0))
 
     val summary = LP.solveSummary(cUnb, atUnb, bUnb)
+
     assert(summary.termination == LP.Termination.DualInfeasible)
     assert(summary.certificateResidual <= 1e-8)
     assert(summary.primalResidual < 1e-4, "the iterate stays near-feasible while diverging along the ray")
 
     // the normalized ray z satisfies its Farkas conditions: z >= 0, c^T z = -1, ||A z||_inf <= eps
     val z = summary.dualCertificate.get.flatMap(_.toArray).collect()
+
     assert(z.forall(_ >= 0.0), "certificate ray must be nonnegative")
     assert(math.abs(-z(0) + 1.0) < 1e-9, "certificate is normalized to c^T z = -1")
     assert(math.abs(z(0) - z(1)) <= 1e-8, "||A z||_inf must be <= tolerance")

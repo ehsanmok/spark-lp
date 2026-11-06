@@ -17,6 +17,7 @@ class NewtonSystemSuite extends AnyFunSuite with DataFrameSuiteBase {
       val factors = BDM.zeros[Double](4, rank)
       (0 until rank).foreach { k =>
         val pivot = (0 until 4).filterNot(expected.contains).maxBy(i => schur(i, i))
+
         assert(schur(pivot, pivot) > 0.0)
         expected += pivot
         val rest = (0 until 4).filterNot(expected.contains)
@@ -26,6 +27,7 @@ class NewtonSystemSuite extends AnyFunSuite with DataFrameSuiteBase {
       }
       val partial = new newton.PartialCholesky(diag(g).toArray, rank,
         j => (0 until 4).map(i => g(i, j)).toArray, 1e-8)
+
       assert(partial.indices.toSeq == expected.toSeq)
       assert(partial.rank == expected.size)
       val explicit = factors * factors.t
@@ -45,9 +47,12 @@ class NewtonSystemSuite extends AnyFunSuite with DataFrameSuiteBase {
     val system = factory.build(rows, 2, None)
     try {
       val solution = system.solve(new DenseVector(Array(1.0, 2.0)))
+
       assert(math.abs(solution(0) * factory.dualRegularization - 1.0) < 1e-10)
       val ranks = events.filter(_.phase == SolvePhase.InnerSolve).flatMap(_.work.flatMap(_.preconditionerRank))
-      assert(ranks.nonEmpty && ranks.forall(_ == 0))
+
+      assert(ranks.nonEmpty)
+      assert(ranks.forall(_ == 0))
       assert(factory.maximumRank == 0)
     } finally system.release()
   }
@@ -61,11 +66,15 @@ class NewtonSystemSuite extends AnyFunSuite with DataFrameSuiteBase {
     val system = factory.build(rows, 2, None)
     try {
       val rhs = BDV(1.0, 2.0)
+
       val solution = new BDV(system.solve(new DenseVector(rhs.toArray)).values)
       val g = BDM((1.0, epsilon), (epsilon, 1.0)) / (1.0 + 1e-8) + BDM.eye[Double](2) * 1e-8
       val defect = norm(g * solution - rhs) / norm(rhs)
-      assert(defect > 1e-14 && defect <= 1e-3)
-      assert(factory.innerIterations == 1 && factory.maximumRank == 0)
+
+      assert(defect > 1e-14)
+      assert(defect <= 1e-3)
+      assert(factory.innerIterations == 1)
+      assert(factory.maximumRank == 0)
     } finally system.release()
   }
 
@@ -86,6 +95,7 @@ class NewtonSystemSuite extends AnyFunSuite with DataFrameSuiteBase {
         case SolveProgress(SolvePhase.InnerSolve, _, _, _, Some(work))
           if work.completed == 0 && work.trueResidual => work.residual
       }.flatten
+
       assert(initialResidual.exists(value => math.abs(value - norm(rhs)) < 1e-20))
     } finally system.release()
   }

@@ -40,9 +40,12 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
     implicit val ss: SparkSession = spark
     fixture(mip) { path =>
       val imported = LpMpsImport.read(path)
-      assert(imported.model.name == "HAND_AUTHORED" && imported.model.sense == Maximize)
+
+      assert(imported.model.name == "HAND_AUTHORED")
+      assert(imported.model.sense == Maximize)
       assert(imported.variables.keySet == Set("amount", "choose"))
       assert(imported.model.inspect.variableDeclarations.map(_.category).toSet == Set(Integer, Binary))
+
       val solution = imported.model.solve()
       try {
         assert(solution.status == LpStatus.Optimal)
@@ -54,15 +57,23 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
       val names = LpMps.write(imported.model.inspect, out, ExportNaming.Original)
       try {
         val restored = LpMpsImport.read(out)
+
         val result = restored.model.solve()
-        try assert(math.abs(result.objectiveValue - 9.0) < 1e-7) finally result.close()
+        try {
+          assert(math.abs(result.objectiveValue - 9.0) < 1e-7)
+        } finally result.close()
+
         assert(restored.variables.keySet == imported.variables.keySet)
       } finally { names.close(); Files.delete(out); Files.delete(out.getParent) }
       val selected = LpMpsImport.read(path, MpsReadOptions(rhsSet = Some("alternate"), boundSet = Some("alternate")))
+
       val other = selected.model.solve()
-      try assert(math.abs(other.objectiveValue - 3.0) < 1e-7) finally other.close()
+      try {
+        assert(math.abs(other.objectiveValue - 3.0) < 1e-7)
+      } finally other.close()
       // Imported handles remain usable in the ordinary modeling API.
       imported.model += (imported.variables("amount") <= 0.0).named("extension")
+
       assert(imported.model.inspect.constraintDeclarations.exists(_.name == "extension"))
     }
   }
@@ -99,11 +110,18 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
       |ENDATA
       |""") { path =>
       val imported = LpMpsImport.read(path)
-      assert(imported.constraints("LROW").size == 2 && imported.constraints("FIXFREE").size == 1)
+
+      assert(imported.constraints("LROW").size == 2)
+      assert(imported.constraints("FIXFREE").size == 1)
       val rows = imported.model.inspect.constraints.collect().map(r => r.name -> r.rhs).toMap
-      assert(rows("LROW__lower") == 1.0 && rows("LROW__upper") == 4.0)
-      assert(rows("GROW__lower") == 1.0 && rows("GROW__upper") == 4.0)
-      assert(rows("POSITIVE__lower") == 2.0 && rows("NEGATIVE__lower") == 2.0)
+
+      assert(rows("LROW__lower") == 1.0)
+      assert(rows("LROW__upper") == 4.0)
+      assert(rows("GROW__lower") == 1.0)
+      assert(rows("GROW__upper") == 4.0)
+      assert(rows("POSITIVE__lower") == 2.0)
+      assert(rows("NEGATIVE__lower") == 2.0)
+
       val result = imported.model.solve()
       try {
         assert(result.status == LpStatus.Optimal)
@@ -129,10 +147,13 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
       |ENDATA
       |""") { path =>
       val declarations = LpMpsImport.read(path).model.inspect.variableDeclarations.map(v => v.name -> v).toMap
+
       assert(declarations("marker").category == Integer)
-      assert(declarations("marker").lower == 0.0 && declarations("marker").upper.contains(1.0))
+      assert(declarations("marker").lower == 0.0)
+      assert(declarations("marker").upper.contains(1.0))
       assert(declarations("bounded").category == Integer)
-      assert(declarations("bounded").lower == 5.0 && declarations("bounded").upper.isEmpty)
+      assert(declarations("bounded").lower == 5.0)
+      assert(declarations("bounded").upper.isEmpty)
     }
   }
 
@@ -144,17 +165,21 @@ class LpMpsImportSuite extends AnyFunSuite with DataFrameSuiteBase {
       mip.replace("PROFIT -7", "PROFIT NaN"))
     invalid.foreach { text => fixture(text) { path =>
       val error = intercept[LpModelException](LpMpsImport.read(path))
-      assert(error.getMessage.contains(path.toString) && error.getMessage.contains("["))
+
+      assert(error.getMessage.contains(path.toString))
+      assert(error.getMessage.contains("["))
     } }
     fixture(mip) { path =>
       intercept[LpModelException](LpMpsImport.read(path, MpsReadOptions(rhsSet = Some("missing"))))
       intercept[LpModelException](LpMpsImport.read(path, MpsReadOptions(maxVariables = 1)))
       intercept[LpModelException](LpMpsImport.read(path, MpsReadOptions(maxBytes = 1)))
       val preserved = LpMpsImport.read(path, MpsReadOptions(boundSet = Some("standard")))
+
       assert(preserved.model.inspect.variableDeclarations.find(_.name == "amount").get.upper.contains(3.0))
     }
     fixture(mip.replace("UP standard amount 3", "PL standard amount")) { path =>
       val unboundedDomain = LpMpsImport.read(path)
+
       assert(unboundedDomain.model.inspect.variableDeclarations.find(_.name == "amount").get.upper.isEmpty)
     }
   }

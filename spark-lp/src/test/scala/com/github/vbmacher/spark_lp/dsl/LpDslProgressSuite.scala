@@ -19,16 +19,19 @@ class LpDslProgressSuite extends AnyFunSuite with DataFrameSuiteBase {
         model += 2.0 * x + offset
         model += (x <= 10.0).named("cap")
         val events = ArrayBuffer.empty[SolveProgress]
+
         val result = model.solve(SolveConfig(tolerance = 1e-30,
           control = SolveControl(onProgress = events += _, stagnation = Some(
             StagnationConfig(patience = 2, absoluteImprovement = 100.0, relativeImprovement = 0.0)))))
         try {
           assert(result.status == LpStatus.Stopped)
           assert(result.stopReason.contains(StopReason.NoProgress))
-          assert(result.candidate.available && result.candidate.feasible)
+          assert(result.candidate.available)
+          assert(result.candidate.feasible)
           assert(math.abs(result.objectiveValue - (2.0 * result.value(x) + offset)) < 1e-6)
           val retained = events.find(e => e.phase == SolvePhase.OuterIteration &&
             e.iteration == result.candidate.iteration.get).get
+
           assert(retained.iterate.map(_.objectiveValue).contains(result.objectiveValue))
           assert(retained.iterate.map(_.primalResidual).contains(result.residuals.primal))
           assert(retained.iterate.map(_.dualResidual).contains(result.residuals.dual))
@@ -38,6 +41,7 @@ class LpDslProgressSuite extends AnyFunSuite with DataFrameSuiteBase {
       }
       val a = run(7.0)
       val b = run(1000000007.0)
+
       assert(a == b)
     }
   }
@@ -48,14 +52,17 @@ class LpDslProgressSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x")
     model += lpSum(x)
     model += (x >= 1.0).named("floor")
+
     val result = model.solve(SolveConfig(control = SolveControl(shouldStop = () => true)))
     try {
-      assert(result.status == LpStatus.Stopped && result.iterations == 0)
+      assert(result.status == LpStatus.Stopped)
+      assert(result.iterations == 0)
       assert(result.candidate == CandidateInfo.Unavailable)
       assert(result.objectiveValue.isNaN)
       assert(result.constraints.select("activity").head().getDouble(0).isNaN)
       assert(intercept[LpModelException](result.value(x)).getMessage.contains("No completed iterate"))
     } finally result.close()
+
     assert(spark.range(1).count() == 1)
   }
 
@@ -69,11 +76,14 @@ class LpDslProgressSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x + y + fixed === 0.0).named("balance")
     model += (2.0 * x + 2.0 * y + 2.0 * fixed === 0.0).named("duplicate")
     model += (fixed === 3.0).named("fixed")
+
     val solution = model.solve()
     try {
       assert(solution.candidate.feasible)
       val xv = solution.value(x)
-      assert(xv >= -100.0 - 1e-6 && xv <= -90.0 + 1e-6)
+
+      assert(xv >= -100.0 - 1e-6)
+      assert(xv <= -90.0 + 1e-6)
       assert(math.abs(xv + solution.value(y) + 3.0) < 1e-8)
       assert(solution.constraints.count() == 3)
     } finally solution.close()
@@ -91,6 +101,7 @@ class LpDslProgressSuite extends AnyFunSuite with DataFrameSuiteBase {
         upperBound = Some(1.0), category = Integer)
       model += lpSum(x)
       model += (x >= 1.0).named("floor")
+
       assert(intercept[LpModelException](model.solve(SolveConfig(control = control)))
         .getMessage.contains("only for continuous"))
     }
@@ -102,10 +113,12 @@ class LpDslProgressSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", lowerBound = 1.0, upperBound = Some(1.0))
     model += lpSum(x)
     model += (x === 1.0 + 1e-12).named("almost")
+
     val result = model.solve(SolveConfig(control = SolveControl(feasibilityTolerance = 1e-14)))
     try {
       assert(result.status == LpStatus.Optimal) // unchanged presolve contract
-      assert(result.candidate.available && !result.candidate.feasible)
+      assert(result.candidate.available)
+      assert(!result.candidate.feasible)
       assert(result.value(x) == 1.0)
     } finally result.close()
   }

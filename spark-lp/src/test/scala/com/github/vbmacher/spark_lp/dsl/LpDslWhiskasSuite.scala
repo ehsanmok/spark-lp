@@ -32,13 +32,13 @@ case class WhiskasIngredient(
   */
 class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
 
-  private val ingredientRows = Seq(
-    WhiskasIngredient("chicken", 0.013, 0.100, 0.080, 0.001, 0.002),
-    WhiskasIngredient("beef", 0.008, 0.200, 0.100, 0.005, 0.005))
-
-  private def buildUntypedModel(implicit spark: SparkSession) = {
-    val ss = spark
-    import ss.implicits._
+  test("untyped DataFrame domain solves Whiskas to optimality") {
+    implicit val ss: SparkSession = spark
+    val ingredientRows = Seq(
+      WhiskasIngredient("chicken", 0.013, 0.100, 0.080, 0.001, 0.002),
+      WhiskasIngredient("beef", 0.008, 0.200, 0.100, 0.005, 0.005))
+    val localSpark = spark
+    import localSpark.implicits._
     val ingredients = ingredientRows.toDF()
 
     val model = LpProblem("Whiskas", Minimize)
@@ -50,14 +50,9 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(amount * $"fat") >= 6.0).named("fat_min")
     model += (lpSum(amount * $"fibre") <= 2.0).named("fibre_max")
     model += (lpSum(amount * $"salt") <= 0.4).named("salt_max")
-    (model, amount)
-  }
-
-  test("untyped DataFrame domain solves Whiskas to optimality") {
-    implicit val ss: SparkSession = spark
-    val (model, amount) = buildUntypedModel
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.iterations > 0)
     assert(solution.residuals.primal < 1e-8)
@@ -70,6 +65,7 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
       .collect()
       .map(r => (r.getString(0), (r.getString(1), r.getDouble(2))))
       .toMap
+
     assert(values("chicken")._1 == "amount[chicken]")
     assert(values("beef")._1 == "amount[beef]")
     assert(values("chicken")._2 ~== 33.3333333 absTol 1e-4)
@@ -78,15 +74,33 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
 
   test("constraints DataFrame reports original rows and LP shadow prices") {
     implicit val ss: SparkSession = spark
-    val (model, _) = buildUntypedModel
+    val ingredientRows = Seq(
+      WhiskasIngredient("chicken", 0.013, 0.100, 0.080, 0.001, 0.002),
+      WhiskasIngredient("beef", 0.008, 0.200, 0.100, 0.005, 0.005))
+    val localSpark = spark
+    import localSpark.implicits._
+    val ingredients = ingredientRows.toDF()
+
+    val model = LpProblem("Whiskas", Minimize)
+    val amount = model.variables("amount", domain = ingredients, key = $"name")
+
+    model += lpSum(amount * $"cost")
+    model += (lpSum(amount) === 100.0).named("total_weight")
+    model += (lpSum(amount * $"protein") >= 8.0).named("protein_min")
+    model += (lpSum(amount * $"fat") >= 6.0).named("fat_min")
+    model += (lpSum(amount * $"fibre") <= 2.0).named("fibre_max")
+    model += (lpSum(amount * $"salt") <= 0.4).named("salt_max")
+
     val solution = model.solve()
 
     assert(solution.constraints.columns.toSeq ==
       Seq("name", "group", "activity", "sense", "rhs", "slack", "dual", "note", "dual_note"))
     val rows = solution.constraints.collect().map(r => r.getString(0) -> r).toMap
+
     assert(rows.keySet == Set("total_weight", "protein_min", "fat_min", "fibre_max", "salt_max"))
 
     val total = rows("total_weight")
+
     assert(total.getString(3) == "==")
     assert(total.getDouble(4) == 100.0)
     assert(total.getDouble(2) ~== 100.0 absTol 1e-6)
@@ -94,12 +108,14 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
 
     // salt is the binding <= constraint: activity == rhs, slack ~ 0
     val salt = rows("salt_max")
+
     assert(salt.getString(3) == "<=")
     assert(salt.getDouble(2) ~== 0.4 absTol 1e-6)
     assert(salt.getDouble(5) ~== 0.0 absTol 1e-6)
 
     // protein is slack: activity = 0.1*33.33 + 0.2*66.67 = 16.67, slack = activity - rhs for >=
     val protein = rows("protein_min")
+
     assert(protein.getString(3) == ">=")
     assert(protein.getDouble(2) ~== 16.6666667 absTol 1e-4)
     assert(protein.getDouble(5) ~== 8.6666667 absTol 1e-4)
@@ -108,6 +124,9 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
   test("typed variablesOf + weightedBy solves the identical model") {
     implicit val ss: SparkSession = spark
     import ss.implicits._
+    val ingredientRows = Seq(
+      WhiskasIngredient("chicken", 0.013, 0.100, 0.080, 0.001, 0.002),
+      WhiskasIngredient("beef", 0.008, 0.200, 0.100, 0.005, 0.005))
     val ingredients = spark.createDataset(ingredientRows)
 
     val model = LpProblem("WhiskasTyped", Minimize)
@@ -121,15 +140,18 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(amount.weightedBy(ingredients)(_.salt)) <= 0.4).named("salt_max")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 0.9666666667 absTol 1e-6)
 
     // values() restores the full typed domain columns plus lp_variable/lp_value
     val values = solution.values(amount)
+
     assert(values.columns.toSeq ==
       Seq("name", "cost", "protein", "fat", "fibre", "salt", "lp_variable", "lp_value"))
     val byName = values.select("name", "lp_value").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     assert(byName("chicken") ~== 33.3333333 absTol 1e-4)
     assert(byName("beef") ~== 66.6666667 absTol 1e-4)
   }
@@ -148,6 +170,7 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (0.002 * chicken + 0.005 * beef <= 0.4).named("salt_max")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 0.9666666667 absTol 1e-6)
     assert(solution.value(chicken) ~== 33.3333333 absTol 1e-4)
@@ -167,6 +190,7 @@ class LpDslWhiskasSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += ((y - 3.0) >= (x - 2.0)).named("shifted")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.value(x) ~== 3.0 absTol 1e-5)
     assert(solution.value(y) ~== 4.0 absTol 1e-5)

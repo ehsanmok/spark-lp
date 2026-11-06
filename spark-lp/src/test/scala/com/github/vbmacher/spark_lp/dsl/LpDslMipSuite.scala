@@ -16,7 +16,9 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
       val x = model.variable("x", upperBound = Some(1.0), category = category)
       model += lpSum(x)
       model += (x >= 1.0).named("floor")
+
       val solution = model.solve()
+
       assert(solution.status == LpStatus.Optimal)
       assert(solution.value(x) == 1.0)
     }
@@ -31,9 +33,11 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (2.0 * x + 2.0 * y <= 3.0).named("cap")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 1.0 absTol 1e-6)
     val (vx, vy) = (solution.value(x), solution.value(y))
+
     assert(vx == math.rint(vx) && vy == math.rint(vy), s"values must be integral, got ($vx, $vy)")
     assert(vx + vy == 1.0)
   }
@@ -50,14 +54,18 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (lpSum(pick * $"weight") <= 10.0).named("capacity")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     // LP relaxation packs 'a' plus a fraction of 'b' (15.6); the integer optimum is {b, c} = 13
+
     assert(solution.objectiveValue ~== 13.0 absTol 1e-6)
 
     val values = solution.values(pick)
+
     assert(values.columns.toSeq == Seq("item", "value", "weight", "lp_variable", "lp_value"))
     val byItem = values.select("item", "lp_value").collect()
       .map(r => r.getString(0) -> r.getDouble(1)).toMap
+
     assert(byItem == Map("a" -> 0.0, "b" -> 1.0, "c" -> 1.0))
   }
 
@@ -70,6 +78,7 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (x + y <= 7.3).named("budget")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 14.3 absTol 1e-5)
     assert(solution.value(x) == 7.0, "the Integer variable must be exactly integral")
@@ -86,7 +95,9 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
 
     // the relaxation is feasible (10/3 <= x <= 11/3) but holds no integer;
     // both branches (x <= 3, x >= 4) carry Farkas certificates
+
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Infeasible)
     assert(solution.objectiveValue.isNaN)
   }
@@ -100,6 +111,7 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
     model += (y - x >= 0.0).named("chain")
 
     val solution = model.solve()
+
     assert(solution.status == LpStatus.Optimal)
     assert(solution.objectiveValue ~== 2.0 absTol 1e-6)
     assert(solution.value(x) == 1.0)
@@ -112,8 +124,12 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", category = Integer)
     model += lpSum(x)
     model += (x >= 1.0).named("floor")
+
     val solution = model.solve()
-    try { assert(solution.status == LpStatus.Optimal); assert(solution.value(x) == 1.0) }
+    try {
+      assert(solution.status == LpStatus.Optimal)
+      assert(solution.value(x) == 1.0)
+    }
     finally solution.close()
   }
 
@@ -123,7 +139,9 @@ class LpDslMipSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", lowerBound = 2.0, category = Binary)
     model += lpSum(x)
     model += (x >= 0.0).named("floor")
-    val e = intercept[LpModelException](model.solve())
-    assert(e.getMessage.contains("no integral values"))
+
+    val error = intercept[LpModelException](model.solve())
+
+    assert(error.getMessage.contains("no integral values"))
   }
 }

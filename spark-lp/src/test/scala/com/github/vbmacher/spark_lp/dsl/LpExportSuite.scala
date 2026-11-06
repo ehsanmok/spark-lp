@@ -54,14 +54,18 @@ class LpExportSuite extends AnyFunSuite with DataFrameSuiteBase {
     try {
       assert(java.util.Arrays.equals(Files.readAllBytes(first), Files.readAllBytes(second)))
       val parsed = HighsInterop.inspect(first)
-      assert(parsed.get("columns").asInt() == 5 && parsed.get("rows").asInt() == 4)
+
+      assert(parsed.get("columns").asInt() == 5)
+      assert(parsed.get("rows").asInt() == 4)
       assert(parsed.get("offset").asDouble() == 7.0)
       assert(parsed.get("lower").get(0).asText() == "-inf")
       assert(parsed.get("upper").get(0).asDouble() == 2.0)
-      assert(parsed.get("integers").get(2).asInt() == 1 && parsed.get("integers").get(3).asInt() == 1)
+      assert(parsed.get("integers").get(2).asInt() == 1)
+      assert(parsed.get("integers").get(3).asInt() == 1)
       assert(math.abs(parsed.get("objective").asDouble() - 10.0) < 1e-8)
       assert(parsed.get("status").asText().contains("Optimal"))
-      assert(mapping.variables.count() == 5 && mapping.constraints.count() == 4)
+      assert(mapping.variables.count() == 5)
+      assert(mapping.constraints.count() == 4)
       intercept[LpModelException](LpExport.lp(model.inspect, first))
       intercept[LpModelException](LpExport.lp(model.inspect, directory.resolve("bad.lp"), ExportNaming.Original))
       assert(!Files.exists(directory.resolve("bad.lp")))
@@ -82,7 +86,9 @@ class LpExportSuite extends AnyFunSuite with DataFrameSuiteBase {
     val mapping = LpExport.lp(model.inspect, file)
     try {
       val parsed = HighsInterop.inspect(file)
-      assert(parsed.get("rows").asInt() == 3 && parsed.get("columns").asInt() == 2)
+
+      assert(parsed.get("rows").asInt() == 3)
+      assert(parsed.get("columns").asInt() == 2)
       assert(math.abs(parsed.get("objective").asDouble() - 5.0) < 1e-8)
       assert(mapping.variables.collect().map(_.originalName).toSet == Set("x[a,1]", "x[b,2]"))
     } finally { mapping.close(); Files.delete(file); Files.delete(file.getParent) }

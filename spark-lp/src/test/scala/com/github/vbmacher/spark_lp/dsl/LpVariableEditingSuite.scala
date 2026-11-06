@@ -13,22 +13,43 @@ class LpVariableEditingSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", upperBound = Some(4.0))
     val expression = 2.0 * x + 1.0
     model += expression
+
     val first = model.solve()
     try {
+      // Repeated fixes replace the fixed value while remembering the edited bounds.
       x.setBounds(-1.0, Some(3.0)).fix(2.0).fix(1.0).rename("renamed")
+
       val fixed = model.solve()
-      try { assert(fixed.value(x) == 1.0); assert(fixed.objectiveValue == 3.0) } finally fixed.close()
+      try {
+        assert(fixed.value(x) == 1.0)
+        assert(fixed.objectiveValue == 3.0)
+      } finally fixed.close()
+      // Unfix restores the bounds preceding the first fix.
       x.unfix()
-      assert(x.lowerBound == -1.0 && x.upperBound.contains(3.0))
+
+      assert(x.lowerBound == -1.0)
+      assert(x.upperBound.contains(3.0))
+
       val restored = model.solve()
-      try { assert(restored.value(x) == 3.0); assert(restored.objectiveValue == 7.0) } finally restored.close()
-      assert(first.value(x) == 4.0 && first.objectiveValue == 9.0)
+      try {
+        assert(restored.value(x) == 3.0)
+        assert(restored.objectiveValue == 7.0)
+      } finally restored.close()
+
+      assert(first.value(x) == 4.0)
+      assert(first.objectiveValue == 9.0)
       assert(expression.coefficient(x) == 2.0)
+      // Edits to a copied variable must leave source bounds intact.
       val copied = model.copy()
       copied.variable(x).fix(-1.0)
-      assert(x.lowerBound == -1.0 && x.upperBound.contains(3.0))
+
+      assert(x.lowerBound == -1.0)
+      assert(x.upperBound.contains(3.0))
+
       val independent = copied.model.solve()
-      try assert(independent.objectiveValue == -1.0) finally independent.close()
+      try {
+        assert(independent.objectiveValue == -1.0)
+      } finally independent.close()
     } finally first.close()
   }
 
@@ -42,8 +63,10 @@ class LpVariableEditingSuite extends AnyFunSuite with DataFrameSuiteBase {
     val xs = model.variables("x", source, $"key", upperBound = Some(2.0))
     model += xs.sum
     xs("a").setBounds(-1.0, Some(4.0))
+
     assert(reads.value == 0L)
     val view = model.inspect
+
     val first = model.solve()
     try {
       assert(math.abs(first.value(xs("a")) - 4.0) < 1e-6)
@@ -51,22 +74,31 @@ class LpVariableEditingSuite extends AnyFunSuite with DataFrameSuiteBase {
       assert(first.constraints.count() == 0)
       xs("a").fix(1.0).rename("special")
       xs.rename("family")
+
       val fixed = model.solve()
       try {
         assert(math.abs(fixed.objectiveValue - 3.0) < 1e-6)
         assert(fixed.values(xs).select("lp_variable").as[String].collect().toSet == Set("special", "family[b]"))
       } finally fixed.close()
+
       assert(first.values(xs).select("lp_variable").as[String].collect().toSet == Set("x[a]", "x[b]"))
       assert(first.rounded().values(xs).select("lp_variable").as[String].collect().toSet == Set("x[a]", "x[b]"))
       assert(view.variables.filter(_.name == "x[a]").first().upper.contains(4.0))
       xs("a").unfix()
+
       assert(xs("a").upperBound.contains(4.0))
       xs.fix(0.5).unfix()
-      assert(xs("a").upperBound.contains(4.0) && xs("b").upperBound.contains(2.0))
+
+      assert(xs("a").upperBound.contains(4.0))
+      assert(xs("b").upperBound.contains(2.0))
       val data = LpPortableModel.fromView(model.inspect)
       val imported = data.toProblem()
+
       val solution = imported.model.solve()
-      try assert(math.abs(solution.objectiveValue - 6.0) < 1e-6) finally solution.close()
+      try {
+        assert(math.abs(solution.objectiveValue - 6.0) < 1e-6)
+      } finally solution.close()
+
       assert(imported.model.inspect.variables.filter(_.name == "special").first().upper.contains(4.0))
     } finally first.close()
   }
@@ -79,6 +111,7 @@ class LpVariableEditingSuite extends AnyFunSuite with DataFrameSuiteBase {
     val x = model.variable("x", upperBound = Some(3.0))
     val b = model.variable("binary", category = Binary)
     val i = model.variable("integer", upperBound = Some(2.0), category = Integer)
+
     intercept[LpModelException](b.fix(0.5))
     intercept[LpModelException](b.setBounds(2.0, Some(3.0)))
     intercept[LpModelException](i.setBounds(0.2, Some(0.3)))
@@ -87,16 +120,21 @@ class LpVariableEditingSuite extends AnyFunSuite with DataFrameSuiteBase {
     intercept[LpModelException](x.setBounds(2.0, Some(1.0)))
     val family = model.variables("family", Seq("a").toDF("key"), $"key")
     family("missing").fix(1.0)
+
     intercept[LpModelException](model.solve())
     val active = LpProblem("active")
     val y = active.variable("y", upperBound = Some(3.0))
     active += lpSum(y)
     active += (y >= 1.0)
     var checked = false
+
     val solution = active.solve(SolveConfig(control = SolveControl(onProgress = _ => {
       intercept[LpModelException](y.fix(2.0)); checked = true
     })))
-    try assert(checked && math.abs(solution.value(y) - 1.0) < 1e-6) finally solution.close()
+    try {
+      assert(checked)
+      assert(math.abs(solution.value(y) - 1.0) < 1e-6)
+    } finally solution.close()
     y.fix(2.0)
   }
 }
